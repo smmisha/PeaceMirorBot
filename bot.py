@@ -19,6 +19,24 @@ from background import job_check_expired_mutes, job_reset_inactive_violations
 from handlers import admin, user, messages, captcha
 
 
+async def job_check_chat_inactivity(context: ContextTypes.DEFAULT_TYPE):
+    """Job to check if any chat has been silent for >= 7 hours (25200s). If so, sends '👀'."""
+    import time
+    now = time.time()
+    SILENCE_THRESHOLD = 7 * 3600  # 7 hours
+
+    for key, last_ts in list(context.bot_data.items()):
+        if isinstance(key, str) and key.startswith("last_msg_time_"):
+            try:
+                chat_id = int(key.replace("last_msg_time_", ""))
+                if now - last_ts >= SILENCE_THRESHOLD:
+                    await context.bot.send_message(chat_id=chat_id, text="👀")
+                    context.bot_data[key] = now
+                    logger.info(f"Sent 7-hour silence notification '👀' to chat {chat_id}.")
+            except Exception as e:
+                logger.warning(f"Could not send inactivity '👀' to chat: {e}")
+
+
 async def post_init(application):
     """Callback run after application initialization to prepare database, background jobs, and bot menu commands."""
     logger.info("Initializing database connection...")
@@ -35,6 +53,14 @@ async def post_init(application):
         logger.info(f"Bot authenticated as @{bot_user.username} (ID: {bot_user.id})")
     except Exception as e:
         logger.warning(f"Could not fetch get_me info: {e}")
+
+    # Schedule repeating 7-hour chat inactivity check (every 30 minutes)
+    application.job_queue.run_repeating(
+        job_check_chat_inactivity,
+        interval=1800,
+        first=60,
+        name="check_chat_inactivity_7h"
+    )
 
     # Register Bot Menu Commands in Telegram
     try:

@@ -37,6 +37,10 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     user = message.from_user
     chat = update.effective_chat
 
+    # Record message timestamp for 7-hour inactivity check
+    import time
+    context.bot_data[f"last_msg_time_{chat.id}"] = time.time()
+
     text_to_check = message.text
 
     # Handle Voice Messages (Голосовые сообщения / ГС)

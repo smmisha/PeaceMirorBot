@@ -275,17 +275,17 @@ async def set_setting(db_path: str, key: str, value: str) -> None:
 
 
 def get_rank_title(points: int) -> tuple[str, str]:
-    """Returns (badge_emoji, title_string) based on accumulated peace points."""
+    """Returns (badge_emoji, title_string) based on accumulated Repa points."""
     if points < 20:
-        return "🐣", "Участник чата"
+        return "🐣", "Новичок по Репе"
     elif points < 100:
-        return "🤝", "Добродушный соратник"
+        return "🤝", "Свой челик"
     elif points < 300:
-        return "✨", "Хранитель Уюта"
+        return "🔥", "Уважаемый тип"
     elif points < 700:
-        return "🕊️", "Миротворец"
+        return "👑", "Авторитет чата"
     else:
-        return "👑", "Легендарный Миротворец"
+        return "⚡", "Легенда Репы"
 
 
 async def add_peace_points(db_path: str, user_id: int, username: str, points: int) -> int:
