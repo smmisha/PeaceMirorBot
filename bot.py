@@ -19,22 +19,24 @@ from background import job_check_expired_mutes, job_reset_inactive_violations
 from handlers import admin, user, messages, captcha
 
 
-async def job_check_chat_inactivity(context: ContextTypes.DEFAULT_TYPE):
-    """Job to check if any chat has been silent for >= 7 hours (25200s). If so, sends '👀'."""
+async def job_check_chat_inactivity(context):
+    """Job to check if a chat has been silent for >= 7 hours (25200s), sending 👀 emoji once."""
     import time
-    now = time.time()
-    SILENCE_THRESHOLD = 7 * 3600  # 7 hours
+    active_chats = context.bot_data.get("active_chats", set())
+    now_ts = time.time()
+    INACTIVITY_7H = 7 * 3600  # 7 hours in seconds
 
-    for key, last_ts in list(context.bot_data.items()):
-        if isinstance(key, str) and key.startswith("last_msg_time_"):
+    for chat_id in list(active_chats):
+        last_msg_time = context.bot_data.get(f"last_msg_time_{chat_id}", 0)
+        eyes_sent = context.bot_data.get(f"eyes_sent_{chat_id}", False)
+
+        if last_msg_time > 0 and (now_ts - last_msg_time >= INACTIVITY_7H) and not eyes_sent:
             try:
-                chat_id = int(key.replace("last_msg_time_", ""))
-                if now - last_ts >= SILENCE_THRESHOLD:
-                    await context.bot.send_message(chat_id=chat_id, text="👀")
-                    context.bot_data[key] = now
-                    logger.info(f"Sent 7-hour silence notification '👀' to chat {chat_id}.")
+                await context.bot.send_message(chat_id=chat_id, text="👀")
+                context.bot_data[f"eyes_sent_{chat_id}"] = True
+                logger.info(f"Chat {chat_id} silent for 7+ hours, sent 👀 emoji.")
             except Exception as e:
-                logger.warning(f"Could not send inactivity '👀' to chat: {e}")
+                logger.warning(f"Failed to send 7h inactivity 👀 emoji to chat {chat_id}: {e}")
 
 
 async def post_init(application):
@@ -54,13 +56,9 @@ async def post_init(application):
     except Exception as e:
         logger.warning(f"Could not fetch get_me info: {e}")
 
-    # Schedule repeating 7-hour chat inactivity check (every 30 minutes)
-    application.job_queue.run_repeating(
-        job_check_chat_inactivity,
-        interval=1800,
-        first=60,
-        name="check_chat_inactivity_7h"
-    )
+    # Schedule repeating 7-hour inactivity check job every 30 minutes
+    if application.job_queue:
+        application.job_queue.run_repeating(job_check_chat_inactivity, interval=1800, first=300, name="inactivity_check_job")
 
     # Register Bot Menu Commands in Telegram
     try:

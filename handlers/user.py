@@ -84,7 +84,7 @@ async def cmd_mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         f"📊 **Статистика участника [{user.full_name}](tg://user?id={user.id}):**\n\n"
         f"• Звание: {badge} **{title}**\n"
-        f"• Баллы Миротворца: `{pts}` 🕊️\n"
+        f"• Репа (баллы Миротворца): `{pts}` 🕊️\n"
         f"• Количество нарушений: `{violations}`\n"
         f"• Текущий статус: {status_str}"
     )

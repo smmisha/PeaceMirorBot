@@ -37,9 +37,12 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     user = message.from_user
     chat = update.effective_chat
 
-    # Record message timestamp for 7-hour inactivity check
     import time
+    # Track last activity timestamp for 7-hour inactivity check (eyes emoji 👀)
     context.bot_data[f"last_msg_time_{chat.id}"] = time.time()
+    context.bot_data[f"eyes_sent_{chat.id}"] = False
+    active_chats = context.bot_data.setdefault("active_chats", set())
+    active_chats.add(chat.id)
 
     text_to_check = message.text
 
@@ -102,10 +105,9 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 badge, title = database.get_rank_title(new_pts)
                 sender_mention = f"[{user.full_name}](tg://user?id={user.id})"
                 target_name = getattr(target_user, "full_name", f"ID {target_user.id}")
-                target_mention = f"[{target_name}](tg://user?id={target_user.id})" if hasattr(target_user, "id") else target_name
                 try:
                     await message.reply_text(
-                        f"🕊️ {sender_mention} выразил(а) респект! {target_name} получает **+5 баллов Миротворца** (Всего: **{new_pts}** {badge}).",
+                        f"🕊️ {sender_mention} выразил(а) респект! {target_name} получает **+5 к Репе** (Всего репы: **{new_pts}** {badge} {title}).",
                         parse_mode="Markdown"
                     )
                 except Exception:
