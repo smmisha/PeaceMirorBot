@@ -361,26 +361,42 @@ async def cmd_chattag(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     arg = context.args[0].strip().lower() if context.args else ""
     setting_key = f"random_tag_{update.effective_chat.id}"
+    current_val = await database.get_setting(DB_PATH, setting_key, "0")
 
     if arg in ("on", "1", "вкл", "включить"):
-        await database.set_setting(DB_PATH, setting_key, "1")
-        await update.effective_message.reply_text(
-            "🎲 **Случайные вклинивания ИИ и пинги по наитию ВКЛЮЧЕНЫ!**\n"
-            "Бот периодически будет органично вступать в беседу и тегать активных участников.",
-            parse_mode="Markdown"
-        )
+        if current_val == "1":
+            await update.effective_message.reply_text(
+                "ℹ️ **Режим ИИ по наитию и душевной поддержки УЖЕ ВКЛЮЧЕН!**\n"
+                "Бот уже активен в чате и поддерживает участников.",
+                parse_mode="Markdown"
+            )
+        else:
+            await database.set_setting(DB_PATH, setting_key, "1")
+            await update.effective_message.reply_text(
+                "🟢 **Режим ИИ по наитию и душевной поддержки ВКЛЮЧЕН!**\n"
+                "• На сообщения про тревогу/панику/усталость бот теперь отвечает на 100% со словами поддержки.\n"
+                "• На обычные сообщения вклинивается спонтанно по настроению ИИ.",
+                parse_mode="Markdown"
+            )
     elif arg in ("off", "0", "выкл", "выключить"):
-        await database.set_setting(DB_PATH, setting_key, "0")
-        await update.effective_message.reply_text(
-            "🛑 **Случайные вклинивания ИИ ВЫКЛЮЧЕНЫ!**\n"
-            "Бот будет отвечать строго только при явном вызове (/ai, реплай или @упоминание).",
-            parse_mode="Markdown"
-        )
+        if current_val == "0":
+            await update.effective_message.reply_text(
+                "ℹ️ **Режим ИИ по наитию УЖЕ ВЫКЛЮЧЕН.**\n"
+                "Бот отвечает строго только при прямом вызове (/ai, реплай, @тег).",
+                parse_mode="Markdown"
+            )
+        else:
+            await database.set_setting(DB_PATH, setting_key, "0")
+            await update.effective_message.reply_text(
+                "🛑 **Режим ИИ по наитию ВЫКЛЮЧЕН!**\n"
+                "Бот будет отвечать строго только при прямом вызове (/ai, реплай или @упоминание).",
+                parse_mode="Markdown"
+            )
     else:
-        current = await database.get_setting(DB_PATH, setting_key, "0")
-        status_text = "🟢 **ВКЛЮЧЕНО**" if current == "1" else "🔴 **ВЫКЛЮЧЕНО**"
+        status_text = "🟢 **ВКЛЮЧЕНО**" if current_val == "1" else "🔴 **ВЫКЛЮЧЕНО**"
         await update.effective_message.reply_text(
-            f"🎲 **Текущий статус случайностей ИИ:** {status_text}\n\n"
-            f"• Переключить: `/chattag on` или `/chattag off`",
+            f"🎲 **Текущий статус ИИ по наитию и поддержки:** {status_text}\n\n"
+            f"• Включить: `/chattag on`\n"
+            f"• Выключить: `/chattag off`",
             parse_mode="Markdown"
         )
