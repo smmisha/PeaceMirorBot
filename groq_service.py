@@ -23,6 +23,34 @@ def _get_groq_client() -> Optional[Groq]:
     return _client
 
 
+async def fetch_meme() -> Tuple[Optional[str], str]:
+    """Fetches a random funny meme photo URL and title (or cat photo as fallback)."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get("https://meme-api.com/gimme")
+            if resp.status_code == 200:
+                data = resp.json()
+                url = data.get("url")
+                title = data.get("title", "🤪 Мем")
+                if url:
+                    return url, f"🤣 {title}"
+    except Exception as e:
+        logger.warning(f"Error fetching meme: {e}")
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get("https://api.thecatapi.com/v1/images/search")
+            if resp.status_code == 200:
+                data = resp.json()
+                if data and isinstance(data, list):
+                    return data[0].get("url"), "🐱 Милый котик для настроения!"
+    except Exception:
+        pass
+
+    return None, ""
+
+
 async def transcribe_voice(file_bytes: bytes, filename: str = "voice.ogg") -> Optional[str]:
     """
     Transcribes audio/voice bytes to Russian text using Groq Whisper (whisper-large-v3).

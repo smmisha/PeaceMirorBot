@@ -130,10 +130,27 @@ async def cmd_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_name = message.from_user.full_name if message.from_user else "Участник"
-    user_id = message.from_user.id if message.from_user else None
     try:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-        ai_reply = await groq_service.generate_ai_reply(prompt, user_name, user_id)
+        ai_reply = await groq_service.generate_ai_reply(prompt, user_name)
         await message.reply_text(ai_reply, parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Error in cmd_ai: {e}")
+
+
+async def cmd_meme(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler for /meme command to send a random meme or funny picture."""
+    message = update.effective_message
+    if not message:
+        return
+
+    try:
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
+        url, caption = await groq_service.fetch_meme()
+        if url:
+            await message.reply_photo(photo=url, caption=caption)
+        else:
+            await message.reply_text("😅 Не удалось загрузить мем. Попробуйте еще раз!", parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Error sending meme: {e}")
+        await message.reply_text("😅 Упс, не удалось отправить мем.")
