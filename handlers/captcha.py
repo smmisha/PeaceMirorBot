@@ -45,7 +45,7 @@ async def _process_user_captcha(context: ContextTypes.DEFAULT_TYPE, chat, user):
                 await context.bot.send_message(
                     chat_id=chat.id,
                     text=(
-                        f"🤐 {user_mention} перезашёл в группу, но у него действует **активный мут за нарушения**!\n"
+                        f"🤐 {user_mention} перезашел/перезашла в группу, но действует **активный мут за нарушения**!\n"
                         f"Ограничения возобновлены. Осталось остывать: **{duration_str}**."
                     ),
                     parse_mode="Markdown"
@@ -215,7 +215,7 @@ async def handle_captcha_callback(update: Update, context: ContextTypes.DEFAULT_
     user_mention = f"[{clicker_user.full_name}](tg://user?id={clicker_user.id})"
     welcome = await context.bot.send_message(
         chat_id=chat.id,
-        text=f"🟢 {user_mention} успешно прошёл проверку капчи. Приятного общения!",
+        text=f"🟢 {user_mention} успешно прошел/прошла проверку капчи. Приятного общения!",
         parse_mode="Markdown"
     )
 
