@@ -23,21 +23,52 @@ async def _track_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         notification.mark_notification_resolved(f"chat_{chat.id}")
 
 
+import re
+
+
 async def _resolve_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Resolves the target user for an admin command either from reply_to_message
-    or from command arguments (@username or user_id).
+    Resolves the target user for an admin command from:
+    1. Reply to user message.
+    2. Reply to bot notification message (extracts mentioned user from entities/link).
+    3. Command arguments (@username or user_id).
     Returns (user_id, username, mention_str).
     """
     message = update.effective_message
-    # Option 1: Reply to message
-    if message and message.reply_to_message and message.reply_to_message.from_user:
-        u = message.reply_to_message.from_user
-        username = f"@{u.username}" if u.username else u.full_name
-        mention = f"[{u.full_name}](tg://user?id={u.id})"
-        return u.id, username, mention
 
-    # Option 2: Command arguments (@username or user_id)
+    # Option 1 & 2: Reply to message
+    if message and message.reply_to_message:
+        reply_msg = message.reply_to_message
+        u = reply_msg.from_user
+
+        # Option 1: Reply directly to a regular user message
+        if u and not u.is_bot:
+            username = f"@{u.username}" if u.username else u.full_name
+            mention = f"[{u.full_name}](tg://user?id={u.id})"
+            return u.id, username, mention
+
+        # Option 2: Reply to a BOT notification message (e.g. "[Удалённое сообщение]" or mute notice)
+        if reply_msg.entities or reply_msg.text:
+            # Check text_mention entities first
+            if reply_msg.entities:
+                for entity in reply_msg.entities:
+                    if entity.type == "text_mention" and entity.user:
+                        target = entity.user
+                        username = f"@{target.username}" if target.username else target.full_name
+                        mention = f"[{target.full_name}](tg://user?id={target.id})"
+                        return target.id, username, mention
+
+            # Check tg://user?id= regex in message text
+            msg_text = reply_msg.text or reply_msg.caption or ""
+            match = re.search(r'tg://user\?id=(\d+)', msg_text)
+            if match:
+                target_id = int(match.group(1))
+                stats = await database.get_user_stats(DB_PATH, target_id)
+                username = stats.get("username") or f"ID: {target_id}"
+                mention = f"[{username}](tg://user?id={target_id})"
+                return target_id, username, mention
+
+    # Option 3: Command arguments (@username or user_id)
     if context.args:
         for arg in context.args:
             raw = arg.strip()
