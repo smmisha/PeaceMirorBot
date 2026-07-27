@@ -103,42 +103,50 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
             # Check if organic AI chat response is enabled by admin (/chattag on)
             random_tag_setting = await database.get_setting(DB_PATH, f"random_tag_{chat.id}", "0")
             if random_tag_setting == "1":
-                import random
-                text_lower = message.text.lower()
+                import random, time
 
-                # Keywords indicating sadness, anxiety, panic, fatigue, or need for emotional support
-                distress_keywords = [
-                    "тревог", "паник", "устал", "тяжело", "выгорел", "выгорела",
-                    "плохо", "груст", "боль", "слез", "слезы", "плач", "надоело",
-                    "бесит", "давлен", "приступ", "страш", "страх", "одиноко", "не могу больше"
-                ]
-                is_emotional_distress = any(kw in text_lower for kw in distress_keywords)
+                # Cooldown per user: Bot will NOT cling to the same user within 10 minutes (600 seconds)
+                last_replied_map = context.bot_data.setdefault("user_ai_last_reply", {})
+                last_replied_time = last_replied_map.get(user.id, 0)
+                now_ts = time.time()
 
-                # ALWAYS respond (100% chance) to sadness/anxiety messages!
-                # For general chat messages, respond spontaneously by AI mood (~20% chance)
-                should_respond = is_emotional_distress or (random.random() < 0.20)
+                COOLDOWN_SECONDS = 600  # 10 minutes pause per user
 
-                if should_respond:
-                    logger.info(f"Organic AI response triggered for user {user.id} ({user.full_name}) (distress={is_emotional_distress})")
-                    try:
-                        await context.bot.send_chat_action(chat_id=chat.id, action="typing")
-                        user_tag = f"@{user.username}" if user.username else user.full_name
+                if now_ts - last_replied_time >= COOLDOWN_SECONDS:
+                    text_lower = message.text.lower()
+                    distress_keywords = [
+                        "тревог", "паник", "устал", "тяжело", "выгорел", "выгорела",
+                        "плохо", "груст", "боль", "слез", "слезы", "плач", "надоело",
+                        "бесит", "давлен", "приступ", "страш", "страх", "одиноко", "не могу больше"
+                    ]
+                    is_emotional_distress = any(kw in text_lower for kw in distress_keywords)
+                    should_respond = is_emotional_distress or (random.random() < 0.20)
 
-                        if is_emotional_distress:
-                            prompt = (
-                                f"Участник {user.full_name} ({user_tag}) написал: «{message.text}».\n"
-                                f"Оцени контекст: если {user.full_name} пишет о СОБСТВЕННОЙ тревоге/панике/усталости — поддержать со словами глубокой эмпатии. "
-                                f"Если он/она просто размышляет или даёт совет другому — ответь как интересный собеседник. "
-                                f"Обязательно соблюдай грамотный гендерный род по имени ({user.full_name})!"
-                            )
-                        else:
-                            prompt = (
-                                f"Участник {user.full_name} ({user_tag}) написал в чат: «{message.text}».\n"
-                                f"Органично по наитию ответь ему/ей в чате и обратись {user_tag}. "
-                                f"Соблюдай правильный гендерный род по имени ({user.full_name})!"
-                            )
+                    if should_respond:
+                        logger.info(f"Organic AI response triggered for user {user.id} ({user.full_name}) (distress={is_emotional_distress})")
+                        try:
+                            await context.bot.send_chat_action(chat_id=chat.id, action="typing")
+                            user_tag = f"@{user.username}" if user.username else user.full_name
 
-                        ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name)
-                        await message.reply_text(ai_reply, parse_mode="Markdown")
-                    except Exception as e:
-                        logger.error(f"Error sending organic AI tag reply: {e}")
+                            if is_emotional_distress:
+                                prompt = (
+                                    f"Участник {user.full_name} ({user_tag}) написал: «{message.text}».\n"
+                                    f"Оцени контекст: если {user.full_name} пишет о СОБСТВЕННОЙ тревоге/панике — поддержать коротко в 1-2 предложениях.\n"
+                                    f"Если он/она просто даёт совет другому — ответь коротко в 1 предложение.\n"
+                                    f"Обязательно соблюдай грамотный гендерный род по имени ({user.full_name})!\n"
+                                    f"ВАЖНО: Пиши ОЧЕНЬ коротко (максимум 1-2 предложения)."
+                                )
+                            else:
+                                prompt = (
+                                    f"Участник {user.full_name} ({user_tag}) написал в чат: «{message.text}».\n"
+                                    f"Органично ответь ему/ей коротко в 1 предложение и обратись {user_tag}.\n"
+                                    f"Соблюдай правильный гендерный род по имени ({user.full_name})!\n"
+                                    f"ВАЖНО: Пиши ОЧЕНЬ коротко (1 предложение)."
+                                )
+
+                            ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name)
+                            await message.reply_text(ai_reply, parse_mode="Markdown")
+                            # Set cooldown timestamp so bot does NOT cling to this user for 10 minutes
+                            last_replied_map[user.id] = now_ts
+                        except Exception as e:
+                            logger.error(f"Error sending organic AI tag reply: {e}")
