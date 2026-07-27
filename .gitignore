@@ -1,0 +1,24 @@
+# Environment variables & secrets (token, passwords)
+.env
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+
+# IDEs & System files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Scratch / Test scripts
+test_detector.py
