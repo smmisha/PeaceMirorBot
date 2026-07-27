@@ -84,7 +84,7 @@ async def cmd_mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         f"📊 **Статистика участника [{user.full_name}](tg://user?id={user.id}):**\n\n"
         f"• Звание: {badge} **{title}**\n"
-        f"• Репа (баллы Миротворца): `{pts}` 🕊️\n"
+        f"• Репутация (баллы Миротворца): `{pts}` 🕊️\n"
         f"• Количество нарушений: `{violations}`\n"
         f"• Текущий статус: {status_str}"
     )
@@ -183,7 +183,7 @@ async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uname = u.get("username")
         disp_name = f"@{uname}" if uname else f"ID: {u.get('user_id')}"
         medal = medals[idx] if idx < len(medals) else f"{idx+1}."
-        lines.append(f"{medal} {disp_name} — **{pts}** баллов ({badge} {title})")
+        lines.append(f"{medal} {disp_name} — **{pts}** баллов репутации ({badge} {title})")
 
-    lines.append("\n✨ *Баллы начисляются за культурное общение, поддержку и благодарности в чате!*")
+    lines.append("\n✨ *Баллы репутации начисляются за культурное общение, поддержку и благодарности в чате!*")
     await message.reply_text("\n".join(lines), parse_mode="Markdown")

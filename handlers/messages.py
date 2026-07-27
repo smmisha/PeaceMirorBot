@@ -115,7 +115,7 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 target_name = getattr(target_user, "full_name", f"ID {target_user.id}")
                 try:
                     await message.reply_text(
-                        f"🕊️ {sender_mention} выразил(а) тепло и респект! {target_name} получает **+{pts_to_add} к Репе** (Всего репы: **{new_pts}** {badge} {title}).",
+                        f"🕊️ {sender_mention} выразил(а) тепло и респект! {target_name} получает **+{pts_to_add} к Репутации** (Всего репутации: **{new_pts}** {badge} {title}).",
                         parse_mode="Markdown"
                     )
                 except Exception:
