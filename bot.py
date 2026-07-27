@@ -108,8 +108,8 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha.handle_new_chat_members))
     app.add_handler(CallbackQueryHandler(captcha.handle_captcha_callback, pattern=r"^captcha_pass_"))
 
-    # Group Messages Handler (both new text messages and edited messages)
-    group_filter = (filters.TEXT & ~filters.COMMAND)
+    # Group Messages Handler (text messages, edited messages, and voice messages)
+    group_filter = ((filters.TEXT | filters.VOICE) & ~filters.COMMAND)
     app.add_handler(MessageHandler(group_filter, messages.handle_group_message))
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE & group_filter, messages.handle_group_message))
 

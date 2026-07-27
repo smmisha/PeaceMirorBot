@@ -21,6 +21,9 @@ MUTE_STEP_5_MINUTES = int(os.getenv("MUTE_STEP_5_MINUTES", "1440"))
 # Reset inactive user violations after N days
 RESET_INACTIVE_DAYS = int(os.getenv("RESET_INACTIVE_DAYS", "7"))
 
+# Groq API Key
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+
 # Setup Logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
