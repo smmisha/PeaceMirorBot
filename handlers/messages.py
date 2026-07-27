@@ -125,9 +125,18 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
                         user_tag = f"@{user.username}" if user.username else user.full_name
 
                         if is_emotional_distress:
-                            prompt = f"Участник {user_tag} написал о своих переживаниях/тревоге: «{message.text}». Вырази искреннюю эмпатию, поддержи его, подскажи успокаивающий совет и обратись к нему {user_tag}."
+                            prompt = (
+                                f"Участник {user.full_name} ({user_tag}) написал: «{message.text}».\n"
+                                f"Оцени контекст: если {user.full_name} пишет о СОБСТВЕННОЙ тревоге/панике/усталости — поддержать со словами глубокой эмпатии. "
+                                f"Если он/она просто размышляет или даёт совет другому — ответь как интересный собеседник. "
+                                f"Обязательно соблюдай грамотный гендерный род по имени ({user.full_name})!"
+                            )
                         else:
-                            prompt = f"Участник {user_tag} написал в чат: «{message.text}». Органично по наитию ответь ему и обратись {user_tag}."
+                            prompt = (
+                                f"Участник {user.full_name} ({user_tag}) написал в чат: «{message.text}».\n"
+                                f"Органично по наитию ответь ему/ей в чате и обратись {user_tag}. "
+                                f"Соблюдай правильный гендерный род по имени ({user.full_name})!"
+                            )
 
                         ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name)
                         await message.reply_text(ai_reply, parse_mode="Markdown")
