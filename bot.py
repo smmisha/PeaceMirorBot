@@ -56,6 +56,7 @@ async def post_init(application):
             BotCommand("removeword", "Удалить слово из стоп-листа"),
             BotCommand("wordlist", "Показать стоп-лист слов"),
             BotCommand("resetstats", "Сбросить статистику (/resetstats @username)"),
+            BotCommand("chattag", "Вкл/Выкл случайные вклинивания ИИ (/chattag on/off)"),
             BotCommand("rules", "Правила общения в чате"),
             BotCommand("mystats", "Моя статистика нарушений"),
             BotCommand("report", "Пожаловаться админам (ответом)"),
