@@ -349,3 +349,38 @@ async def cmd_resetstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await database.reset_user_stats(DB_PATH, user_id)
     await update.effective_message.reply_text(f"✅ Статистика нарушений для {mention} полностью сброшена.", parse_mode="Markdown")
+
+
+async def cmd_chattag(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command /chattag [on | off] to toggle random organic AI chat tags."""
+    if not await is_admin(update, context):
+        await update.message.reply_text("❌ У вас нет прав администратора.")
+        return
+
+    await _track_admin(update, context)
+
+    arg = context.args[0].strip().lower() if context.args else ""
+    setting_key = f"random_tag_{update.effective_chat.id}"
+
+    if arg in ("on", "1", "вкл", "включить"):
+        await database.set_setting(DB_PATH, setting_key, "1")
+        await update.effective_message.reply_text(
+            "🎲 **Случайные вклинивания ИИ и пинги по наитию ВКЛЮЧЕНЫ!**\n"
+            "Бот периодически будет органично вступать в беседу и тегать активных участников.",
+            parse_mode="Markdown"
+        )
+    elif arg in ("off", "0", "выкл", "выключить"):
+        await database.set_setting(DB_PATH, setting_key, "0")
+        await update.effective_message.reply_text(
+            "🛑 **Случайные вклинивания ИИ ВЫКЛЮЧЕНЫ!**\n"
+            "Бот будет отвечать строго только при явном вызове (/ai, реплай или @упоминание).",
+            parse_mode="Markdown"
+        )
+    else:
+        current = await database.get_setting(DB_PATH, setting_key, "0")
+        status_text = "🟢 **ВКЛЮЧЕНО**" if current == "1" else "🔴 **ВЫКЛЮЧЕНО**"
+        await update.effective_message.reply_text(
+            f"🎲 **Текущий статус случайностей ИИ:** {status_text}\n\n"
+            f"• Переключить: `/chattag on` или `/chattag off`",
+            parse_mode="Markdown"
+        )

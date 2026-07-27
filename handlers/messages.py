@@ -87,7 +87,23 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 logger.info(f"AI response requested by user {user.id} ({user.full_name}): '{prompt}'")
                 try:
                     await context.bot.send_chat_action(chat_id=chat.id, action="typing")
-                    ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name, user.id)
+                    ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name)
                     await message.reply_text(ai_reply, parse_mode="Markdown")
                 except Exception as e:
                     logger.error(f"Error sending AI reply to user {user.id}: {e}")
+        else:
+            # Check if random organic tag / AI response is enabled by admin (/chattag on)
+            import random
+            random_tag_setting = await database.get_setting(DB_PATH, f"random_tag_{chat.id}", "0")
+            if random_tag_setting == "1":
+                # 5% chance per normal chat message
+                if random.random() < 0.05:
+                    logger.info(f"Random organic AI chat tag triggered for user {user.id} ({user.full_name}) in chat {chat.id}")
+                    try:
+                        await context.bot.send_chat_action(chat_id=chat.id, action="typing")
+                        user_tag = f"@{user.username}" if user.username else user.full_name
+                        prompt = f"Участник {user_tag} только что написал в чат: «{message.text}». Органично подхвати разговор и обратись/тегни его {user_tag}."
+                        ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name)
+                        await message.reply_text(ai_reply, parse_mode="Markdown")
+                    except Exception as e:
+                        logger.error(f"Error sending random organic AI tag reply: {e}")

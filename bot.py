@@ -112,6 +112,7 @@ def main():
     app.add_handler(CommandHandler("removeword", admin.cmd_removeword))
     app.add_handler(CommandHandler("wordlist", admin.cmd_wordlist))
     app.add_handler(CommandHandler("resetstats", admin.cmd_resetstats))
+    app.add_handler(CommandHandler("chattag", admin.cmd_chattag))
 
     # Captcha Handlers for New Chat Members (both member updates and service messages)
     app.add_handler(ChatMemberHandler(captcha.handle_chat_member_updated, ChatMemberHandler.CHAT_MEMBER))

@@ -35,6 +35,11 @@ CREATE TABLE IF NOT EXISTS admin_activity (
     last_active TIMESTAMP NOT NULL,
     PRIMARY KEY (user_id, chat_id)
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -247,3 +252,18 @@ async def get_active_user_mute(db_path: str, chat_id: int, user_id: int) -> dict
                 return dict(row)
 
     return None
+
+
+async def get_setting(db_path: str, key: str, default: str = "") -> str:
+    """Gets a setting value from settings table."""
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute("SELECT value FROM settings WHERE key = ?", (key,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else default
+
+
+async def set_setting(db_path: str, key: str, value: str) -> None:
+    """Sets a setting value in settings table."""
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+        await db.commit()
