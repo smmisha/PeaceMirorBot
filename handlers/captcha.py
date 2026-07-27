@@ -172,6 +172,31 @@ async def handle_captcha_callback(update: Update, context: ContextTypes.DEFAULT_
     if not query or not query.data:
         return
 
+async def approve_user_captcha(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> bool:
+    """Unmutes user, removes pending captcha jobs, and restores writing permissions."""
+    try:
+        await context.bot.restrict_chat_member(
+            chat_id=chat_id,
+            user_id=user_id,
+            permissions=UNMUTED_PERMISSIONS
+        )
+    except Exception as e:
+        logger.error(f"Error restoring permissions for user {user_id}: {e}")
+
+    job_3m_name = f"captcha_timeout_3m_{chat_id}_{user_id}"
+    job_24h_name = f"captcha_kick_24h_{chat_id}_{user_id}"
+    for job in context.job_queue.get_jobs_by_name(job_3m_name) + context.job_queue.get_jobs_by_name(job_24h_name):
+        job.schedule_removal()
+
+    return True
+
+
+async def handle_captcha_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback query handler for when a user or admin clicks the captcha pass button."""
+    query = update.callback_query
+    if not query:
+        return
+
     data = query.data
     if not data.startswith("captcha_pass_"):
         return
@@ -180,29 +205,23 @@ async def handle_captcha_callback(update: Update, context: ContextTypes.DEFAULT_
     clicker_user = query.from_user
     chat = update.effective_chat
 
-    # Check if the person clicking is the actual target user
-    if clicker_user.id != target_user_id:
+    is_admin_click = await _is_chat_admin(context, chat.id, clicker_user.id)
+
+    # Check if the person clicking is the target user OR an admin
+    if clicker_user.id != target_user_id and not is_admin_click:
         await query.answer("⚠️ Эта капча предназначена не для вас!", show_alert=True)
         return
 
-    # User passed captcha successfully!
-    await query.answer("✅ Капча успешно пройдена! Добро пожаловать!", show_alert=False)
+    # Approve captcha and restore writing permissions
+    await approve_user_captcha(context, chat.id, target_user_id)
 
-    # Restore writing permissions
-    try:
-        await context.bot.restrict_chat_member(
-            chat_id=chat.id,
-            user_id=clicker_user.id,
-            permissions=UNMUTED_PERMISSIONS
-        )
-    except Exception as e:
-        logger.error(f"Error restoring permissions for user {clicker_user.id}: {e}")
-
-    # Remove all pending captcha jobs for this user (both 3m and 24h)
-    job_3m_name = f"captcha_timeout_3m_{chat.id}_{clicker_user.id}"
-    job_24h_name = f"captcha_kick_24h_{chat.id}_{clicker_user.id}"
-    for job in context.job_queue.get_jobs_by_name(job_3m_name) + context.job_queue.get_jobs_by_name(job_24h_name):
-        job.schedule_removal()
+    if is_admin_click and clicker_user.id != target_user_id:
+        await query.answer("✅ Капча у пользователя успешно снята администратором!", show_alert=False)
+        text_out = f"🟢 Администратор [{clicker_user.full_name}](tg://user?id={clicker_user.id}) вручную снял капчу у пользователя."
+    else:
+        await query.answer("✅ Капча успешно пройдена! Добро пожаловать!", show_alert=False)
+        user_mention = f"[{clicker_user.full_name}](tg://user?id={clicker_user.id})"
+        text_out = f"🟢 {user_mention} успешно прошел/прошла проверку капчи. Приятного общения!"
 
     # Delete the captcha message
     if query.message:
@@ -212,10 +231,9 @@ async def handle_captcha_callback(update: Update, context: ContextTypes.DEFAULT_
             pass
 
     # Send temporary welcome text (auto-deletes after 10 seconds)
-    user_mention = f"[{clicker_user.full_name}](tg://user?id={clicker_user.id})"
     welcome = await context.bot.send_message(
         chat_id=chat.id,
-        text=f"🟢 {user_mention} успешно прошел/прошла проверку капчи. Приятного общения!",
+        text=text_out,
         parse_mode="Markdown"
     )
 

@@ -400,3 +400,31 @@ async def cmd_chattag(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• Выключить: `/chattag off`",
             parse_mode="Markdown"
         )
+
+
+async def cmd_uncaptcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command /uncaptcha [@username | ID | reply] to manually approve/remove captcha for a user."""
+    if not await is_admin(update, context):
+        await update.message.reply_text("❌ У вас нет прав администратора.")
+        return
+
+    await _track_admin(update, context)
+
+    user_id, username, mention = await _resolve_target_user(update, context)
+    if not user_id:
+        await update.message.reply_text(
+            "⚠️ Укажите пользователя ответом на сообщение или `@username` / `ID`:\n"
+            "Пример: `/uncaptcha @username`",
+            parse_mode="Markdown"
+        )
+        return
+
+    from handlers.captcha import approve_user_captcha
+    ok = await approve_user_captcha(context, update.effective_chat.id, user_id)
+    if ok:
+        await update.effective_message.reply_text(
+            f"✅ **Капча у пользователя {mention} успешно снята!** Права отправки сообщений восстановлены.",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.effective_message.reply_text("❌ Не удалось снять капчу.", parse_mode="Markdown")

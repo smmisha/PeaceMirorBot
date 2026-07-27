@@ -57,6 +57,7 @@ async def post_init(application):
             BotCommand("wordlist", "Показать стоп-лист слов"),
             BotCommand("resetstats", "Сбросить статистику (/resetstats @username)"),
             BotCommand("chattag", "Вкл/Выкл случайные вклинивания ИИ (/chattag on/off)"),
+            BotCommand("uncaptcha", "Снять капчу с пользователя (/uncaptcha @username)"),
             BotCommand("rules", "Правила общения в чате"),
             BotCommand("mystats", "Моя статистика нарушений"),
             BotCommand("report", "Пожаловаться админам (ответом)"),
@@ -118,9 +119,10 @@ def main():
     app.add_handler(CommandHandler("warn", admin.cmd_warn))
     app.add_handler(CommandHandler("addword", admin.cmd_addword))
     app.add_handler(CommandHandler("removeword", admin.cmd_removeword))
-    app.add_handler(CommandHandler("wordlist", admin.cmd_wordlist))
     app.add_handler(CommandHandler("resetstats", admin.cmd_resetstats))
     app.add_handler(CommandHandler("chattag", admin.cmd_chattag))
+    app.add_handler(CommandHandler("uncaptcha", admin.cmd_uncaptcha))
+    app.add_handler(CommandHandler("passcaptcha", admin.cmd_uncaptcha))
 
     # Captcha Handlers for New Chat Members (both member updates and service messages)
     app.add_handler(ChatMemberHandler(captcha.handle_chat_member_updated, ChatMemberHandler.CHAT_MEMBER))
