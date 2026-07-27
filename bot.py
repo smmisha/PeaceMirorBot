@@ -76,18 +76,22 @@ async def post_init(application):
         await application.bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
 
         admin_commands = [
+            BotCommand("ai", "Задать вопрос ИИ (/ai <вопрос>)"),
+            BotCommand("summary", "Итоги общения / Выжимка чата"),
+            BotCommand("top", "Рейтинг Топ-10 Миротворцев чата"),
+            BotCommand("meme", "Прислать смешной мем или картинку"),
+            BotCommand("mystats", "Моя статистика и репутация"),
+            BotCommand("rules", "Правила общения в чате"),
+            BotCommand("report", "Пожаловаться админам (ответом)"),
             BotCommand("mute", "Выдать мут (ответом или /mute 15 @username)"),
             BotCommand("unmute", "Снять мут (ответом или /unmute @username)"),
             BotCommand("warn", "Выдать предупреждение (/warn @username)"),
             BotCommand("addword", "Добавить слово в стоп-лист (/addword <слово>)"),
             BotCommand("removeword", "Удалить слово из стоп-листа"),
             BotCommand("wordlist", "Показать стоп-лист слов"),
-            BotCommand("resetstats", "Сбросить статистику (/resetstats @username)"),
-            BotCommand("chattag", "Вкл/Выкл случайные вклинивания ИИ (/chattag on/off)"),
+            BotCommand("resetstats", "Сбросить статистику (/resetstats @username | all)"),
+            BotCommand("chattag", "Вкл/Выкл случайные отклики ИИ (/chattag on/off)"),
             BotCommand("uncaptcha", "Снять капчу с пользователя (/uncaptcha @username)"),
-            BotCommand("rules", "Правила общения в чате"),
-            BotCommand("mystats", "Моя статистика нарушений"),
-            BotCommand("report", "Пожаловаться админам (ответом)"),
             BotCommand("help", "Справка по командам"),
         ]
         await application.bot.set_my_commands(admin_commands, scope=BotCommandScopeAllChatAdministrators())
