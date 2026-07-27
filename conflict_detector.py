@@ -73,10 +73,10 @@ SAFE_WORDS: Set[str] = {
 RUSSIAN_PROFANITY_REGEX = re.compile(
     r'\b\w*'
     r'('
-    r'хуй|хуя|хуе|хуё|хуи|хул|хуу|хер|'
+    r'хуй|хуйн|хуя|хуе|хуё|хуи|хул|хуу|хер|'
     r'пизд|пидар|пидор|'
     r'бля|блят|бляд|'
-    r'еба|ебе|ебё|еби|ебан|ебат|ёба|ёбн|'
+    r'еба|ебе|ебё|еби|ебан|ебат|ёба|ёбн|ебу|ебы|ебн|'
     r'мудак|мудил|'
     r'гандон|гондон|'
     r'долбоеб|долбоёб|'
@@ -91,12 +91,12 @@ RUSSIAN_PROFANITY_REGEX = re.compile(
 # Regex pattern for Latin lookalikes and English translit profanity bypasses
 LATIN_PROFANITY_REGEX = re.compile(
     r'\b\w*('
-    r'xuy|xuj|huj|xui|xyi|xue|xuya|'
-    r'pizd|pizdet|pizdec|pizdos|pizdu|'
-    r'blyat|blyad|blia|blya|bitch|'
-    r'ebat|ebal|ebanut|ebalnik|ebani|ebala|'
+    r'xuy|xuj|huj|xui|xyi|xue|xuya|xuyn|huyn|xueta|hueta|xuesos|huesos|'
+    r'pizd|pizdet|pizdec|pizdos|pizdu|pizdat|pizdab|'
+    r'blyat|blyad|blia|blya|bliat|bliad|bitch|'
+    r'ebat|ebal|ebanut|ebalnik|ebani|ebala|ebuc|yebat|yebal|yeban|yebut|'
     r'suka|cyka|'
-    r'mudak|gandon|gondon'
+    r'mudak|mudil|gandon|gondon'
     r')\w*\b',
     re.IGNORECASE
 )
