@@ -4,19 +4,21 @@ from typing import Optional, List, Tuple, Set
 # Mapping of Latin lookalikes and common leet-speak numbers to Russian Cyrillic letters
 CHAR_MAP = {
     'a': 'а', '@': 'а',
-    'b': 'в', '6': 'б',
+    'b': 'б', '6': 'б',
     'c': 'с', '$': 'с',
     'd': 'д',
     'e': 'е', '3': 'з',
     'f': 'ф',
     'g': 'г',
     'h': 'х',
-    'i': 'и', '1': 'і', '!': 'i',
+    'i': 'и', '1': 'и', '!': 'и',
+    'j': 'й',
     'k': 'к',
+    'l': 'л',
     'm': 'м',
     'n': 'н',
     'o': 'о', '0': 'о',
-    'p': 'р',
+    'p': 'п',
     'r': 'р',
     's': 'с',
     't': 'т',
@@ -49,9 +51,13 @@ SAFE_WORDS: Set[str] = {
     # Words containing "сук"
     "рисунок", "рисунка", "рисунки", "рисунках", "посуда", "посуду", "посуде",
     "сукно", "сукцессия", "рассудок", "рассудка", "рассуждения", "рассуждать",
-    # Words containing "хер"
+    # Words containing "хер" / "хрен"
     "парикмахер", "парикмахерская", "сверхестественный", "сверхвысокий",
     "характер", "характера", "характеристика",
+    "хрен", "хрена", "хрену", "хреном", "хреновый", "хреново", "хреновая", "хреновые", "хрень",
+    "фига", "фиг", "фигу", "фиге", "фигой", "фиговый", "фигово", "пофиг", "пофигу",
+    # Words containing "очко"
+    "очко", "очка", "очке", "очку", "очком", "очках", "очки", "очков",
     # Words containing "еб"
     "колебание", "колебания", "колебаний", "колебаться",
     "хлеб", "хлеба", "хлебушек", "жребий", "жребия", "серебро", "стебель", "гребень",
@@ -61,15 +67,13 @@ SAFE_WORDS: Set[str] = {
     "задрочить",  # keep only explicit forms, not "подросток" etc.
     # Words containing "тварь" — allow as animal term in some contexts
     "тварина",
-    # Words containing "пизд" — no safe words typically
-    # Words containing "мудак" — no safe words typically
 }
 
 # Regex pattern for Russian profanity and insult roots
 RUSSIAN_PROFANITY_REGEX = re.compile(
     r'\b\w*'
     r'('
-    r'хуй|хуя|хуе|хуё|хуи|хул|хер|'
+    r'хуй|хуя|хуе|хуё|хуи|хул|хуу|хер|'
     r'пизд|пидар|пидор|'
     r'бля|блят|бляд|'
     r'еба|ебе|ебё|еби|ебан|ебат|ёба|ёбн|'
@@ -81,6 +85,19 @@ RUSSIAN_PROFANITY_REGEX = re.compile(
     r'мразь|мрази'
     r')'
     r'\w*\b',
+    re.IGNORECASE
+)
+
+# Regex pattern for Latin lookalikes and English translit profanity bypasses
+LATIN_PROFANITY_REGEX = re.compile(
+    r'\b\w*('
+    r'xuy|xuj|huj|xui|xyi|xue|xuya|'
+    r'pizd|pizdet|pizdec|pizdos|pizdu|'
+    r'blyat|blyad|blia|blya|bitch|'
+    r'ebat|ebal|ebanut|ebalnik|ebani|ebala|'
+    r'suka|cyka|'
+    r'mudak|gandon|gondon'
+    r')\w*\b',
     re.IGNORECASE
 )
 
@@ -115,6 +132,11 @@ def find_violation(text: str, custom_bad_words: Optional[List[str]] = None) -> T
 
     normalized = normalize_text(text)
     collapsed = collapse_repeated(normalized)
+
+    # 0. Check Latin / Translit Profanity (e.g. xuy, pizda, blyat, etc.)
+    latin_match = LATIN_PROFANITY_REGEX.search(text)
+    if latin_match:
+        return True, latin_match.group(0)
 
     # Extract individual words from normalized text
     words = re.findall(r'[а-яёa-z0-9]+', normalized, re.IGNORECASE)
