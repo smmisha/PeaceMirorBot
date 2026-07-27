@@ -87,7 +87,7 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 logger.info(f"AI response requested by user {user.id} ({user.full_name}): '{prompt}'")
                 try:
                     await context.bot.send_chat_action(chat_id=chat.id, action="typing")
-                    ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name)
+                    ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name, user.id)
                     await message.reply_text(ai_reply, parse_mode="Markdown")
                 except Exception as e:
                     logger.error(f"Error sending AI reply to user {user.id}: {e}")

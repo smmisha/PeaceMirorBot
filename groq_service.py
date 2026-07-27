@@ -92,18 +92,20 @@ async def analyze_cultural_conflict(recent_messages: list[dict]) -> Tuple[bool, 
         return False, None, None
 
 
-async def generate_ai_reply(user_prompt: str, user_name: str = "Участник") -> str:
+async def generate_ai_reply(user_prompt: str, user_name: str = "Участник", user_id: Optional[int] = None) -> str:
     """
-    Generates a friendly, smart, and humorous AI response using Groq Llama 3.3 70B.
+    Generates a friendly, smart, and humorous AI response using Groq Llama 3.3 70B, tagging the user.
     """
     client = _get_groq_client()
     if not client:
         return "🤖 AI модуль временно недоступен (не настроен GROQ_API_KEY)."
 
+    user_mention = f"[{user_name}](tg://user?id={user_id})" if user_id else user_name
+
     system_prompt = (
         "Ты — Антиконфликт, дружелюбный, умный и отзывчивый ИИ-помощник и миротворец в Telegram чате.\n"
-        "Твоя задача — давать грамотные, вежливые, легкие и интересные ответы участникам чата.\n"
-        "Отвечай коротко, по существу, на русском языке, без лишней воды и длинных предисловий."
+        f"Всегда начинай свой ответ с персонального обращения к собеседнику: {user_mention}.\n"
+        "Давай грамотные, вежливые, легкие и интересные ответы. Отвечай коротко и по существу на русском языке."
     )
 
     try:
@@ -116,7 +118,11 @@ async def generate_ai_reply(user_prompt: str, user_name: str = "Участник
             temperature=0.7,
             max_tokens=400
         )
-        return response.choices[0].message.content.strip()
+        reply_text = response.choices[0].message.content.strip()
+        # If response doesn't start with user_mention, prepend it gracefully
+        if user_id and f"tg://user?id={user_id}" not in reply_text:
+            reply_text = f"{user_mention}, {reply_text}"
+        return reply_text
     except Exception as e:
         logger.error(f"Error generating AI reply via Groq: {e}")
         return "🤖 Извините, не удалось сформировать ответ. Попробуйте еще раз позже."
