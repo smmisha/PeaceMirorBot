@@ -66,7 +66,15 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # If no profanity violation, check if user explicitly called/addressed the bot
     if message.text:
-        bot_username = context.bot.username or ""
+        bot_username = context.bot_data.get("bot_username")
+        if not bot_username:
+            try:
+                me = await context.bot.get_me()
+                bot_username = me.username
+                context.bot_data["bot_username"] = bot_username
+            except Exception:
+                bot_username = context.bot.username or ""
+
         is_reply_to_bot = (
             message.reply_to_message
             and message.reply_to_message.from_user

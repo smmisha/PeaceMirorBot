@@ -29,6 +29,13 @@ async def post_init(application):
 
     logger.info("Database initialized successfully.")
 
+    try:
+        bot_user = await application.bot.get_me()
+        application.bot_data["bot_username"] = bot_user.username
+        logger.info(f"Bot authenticated as @{bot_user.username} (ID: {bot_user.id})")
+    except Exception as e:
+        logger.warning(f"Could not fetch get_me info: {e}")
+
     # Register Bot Menu Commands in Telegram
     try:
         user_commands = [
