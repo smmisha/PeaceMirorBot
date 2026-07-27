@@ -92,37 +92,65 @@ async def analyze_cultural_conflict(recent_messages: list[dict]) -> Tuple[bool, 
         return False, None, None
 
 
-async def generate_ai_reply(user_prompt: str, user_name: str = "Участник", user_id: Optional[int] = None) -> str:
+def search_web_info(query: str, max_results: int = 3) -> Optional[str]:
     """
-    Generates a friendly, smart, and humorous AI response using Groq Llama 3.3 70B, tagging the user.
+    Performs a live web search via DuckDuckGo (ddgs) and returns formatted search snippets.
+    """
+    try:
+        from ddgs import DDGS
+        results = list(DDGS().text(query, max_results=max_results))
+        if not results:
+            return None
+        snippets = []
+        for r in results:
+            title = r.get("title", "")
+            body = r.get("body", "")
+            snippets.append(f"• {title}: {body}")
+        return "\n".join(snippets)
+    except Exception as e:
+        logger.warning(f"Web search error: {e}")
+        return None
+
+
+async def generate_ai_reply(user_prompt: str, user_name: str = "Участник") -> str:
+    """
+    Generates a friendly, smart AI response using Groq Llama 3.3 70B with live web search capability.
     """
     client = _get_groq_client()
     if not client:
         return "🤖 AI модуль временно недоступен (не настроен GROQ_API_KEY)."
 
-    user_mention = f"[{user_name}](tg://user?id={user_id})" if user_id else user_name
+    # Determine if query requires live web search
+    search_keywords = ["найди", "погугли", "новости", "погода", "курс", "сегодня", "интернет", "инет", "события", "кто такой", "что такое"]
+    needs_search = any(kw in user_prompt.lower() for kw in search_keywords)
+
+    web_results = None
+    if needs_search:
+        logger.info(f"Triggering live web search for query: '{user_prompt}'")
+        web_results = search_web_info(user_prompt)
 
     system_prompt = (
         "Ты — Антиконфликт, дружелюбный, умный и отзывчивый ИИ-помощник и миротворец в Telegram чате.\n"
-        f"Всегда начинай свой ответ с персонального обращения к собеседнику: {user_mention}.\n"
-        "Давай грамотные, вежливые, легкие и интересные ответы. Отвечай коротко и по существу на русском языке."
+        "Твоя задача — давать грамотные, вежливые, легкие и интересные ответы участникам чата.\n"
+        "Если тебе предоставлены результаты поиска из интернета, используй их для актуального ответа.\n"
+        "Отвечай коротко, по существу, на русском языке, без лишней воды и длинных предисловий."
     )
+
+    prompt_content = f"{user_name}: {user_prompt}"
+    if web_results:
+        prompt_content += f"\n\n[Свежие результаты поиска из интернета]:\n{web_results}"
 
     try:
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"{user_name}: {user_prompt}"}
+                {"role": "user", "content": prompt_content}
             ],
             temperature=0.7,
-            max_tokens=400
+            max_tokens=450
         )
-        reply_text = response.choices[0].message.content.strip()
-        # If response doesn't start with user_mention, prepend it gracefully
-        if user_id and f"tg://user?id={user_id}" not in reply_text:
-            reply_text = f"{user_mention}, {reply_text}"
-        return reply_text
+        return response.choices[0].message.content.strip()
     except Exception as e:
         logger.error(f"Error generating AI reply via Groq: {e}")
         return "🤖 Извините, не удалось сформировать ответ. Попробуйте еще раз позже."
