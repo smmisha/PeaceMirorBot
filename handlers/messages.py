@@ -61,16 +61,18 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     if not text_to_check:
         return
 
-    # Record clean message to chat history buffer for /summary command (max 100 messages)
+    # Record clean message to chat history buffer for /summary command (max 200 messages)
     if text_to_check and not text_to_check.startswith("/"):
         from datetime import datetime
+        now_dt = datetime.now()
         chat_hist = context.bot_data.setdefault(f"chat_history_{chat.id}", [])
         chat_hist.append({
             "name": user.full_name,
             "text": text_to_check[:300],
-            "time": datetime.now().strftime("%H:%M")
+            "date": now_dt.strftime("%Y-%m-%d"),
+            "time": now_dt.strftime("%H:%M")
         })
-        if len(chat_hist) > 100:
+        if len(chat_hist) > 200:
             chat_hist.pop(0)
 
     # Retrieve custom bad words from database

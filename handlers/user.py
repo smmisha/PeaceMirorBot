@@ -190,21 +190,30 @@ async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for /summary, /digest to summarize recent chat messages."""
+    """Handler for /summary, /digest to summarize today's chat messages (since 00:00)."""
     message = update.effective_message
     if not message:
         return
 
+    from datetime import datetime
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
     chat = update.effective_chat
     history = context.bot_data.get(f"chat_history_{chat.id}", [])
 
-    if not history or len(history) < 3:
-        await message.reply_text("📝 В чате пока недостаточно сообщений, чтобы подводить итоги! Пообщайтесь ещё немного.", parse_mode="Markdown")
+    # Filter history strictly for TODAY (since 00:00)
+    today_history = [m for m in history if m.get("date", today_str) == today_str]
+
+    if not today_history or len(today_history) < 2:
+        await message.reply_text(
+            "📝 **За сегодня (с 00:00) сообщений пока недостаточно для подведения итогов!**\nПообщайтесь немного, и я составлю краткую сводку дня.",
+            parse_mode="Markdown"
+        )
         return
 
     try:
         await context.bot.send_chat_action(chat_id=chat.id, action="typing")
-        summary_text = await groq_service.summarize_chat_history(history)
+        summary_text = await groq_service.summarize_chat_history(today_history)
         await message.reply_text(summary_text, parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Error in cmd_summary: {e}")
