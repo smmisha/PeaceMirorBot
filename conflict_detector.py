@@ -166,10 +166,10 @@ def find_violation(text: str, custom_bad_words: Optional[List[str]] = None) -> T
     punc_stripped = re.sub(r'[\.\,_\-\*\~\+\=\/\\]+', ' ', normalized)
     punc_collapsed = collapse_repeated(punc_stripped)
 
-    # 2. Collapse single/double-letter spaced words (e.g. 'х у й' -> 'хуй') without merging normal words
+    # 2. Collapse single-letter spaced words (e.g. 'х у й' -> 'хуй') without chopping normal words like "я тебе"
     spaced_collapsed = punc_stripped
     for _ in range(5):
-        spaced_collapsed = re.sub(r'(\b[а-яa-z0-9]{1,2})\s+([а-яa-z0-9]{1,2})', r'\1\2', spaced_collapsed, flags=re.IGNORECASE)
+        spaced_collapsed = re.sub(r'\b([а-яa-z0-9])\s+(?=[а-яa-z0-9]\b)', r'\1', spaced_collapsed, flags=re.IGNORECASE)
 
     for check_str in (normalized, collapsed, punc_stripped, punc_collapsed, spaced_collapsed):
         words = re.findall(r'[а-яёa-z0-9]+', check_str, re.IGNORECASE)
