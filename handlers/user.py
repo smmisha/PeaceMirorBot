@@ -187,3 +187,25 @@ async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines.append("\n✨ *Баллы репутации начисляются за культурное общение, поддержку и благодарности в чате!*")
     await message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler for /summary, /digest to summarize recent chat messages."""
+    message = update.effective_message
+    if not message:
+        return
+
+    chat = update.effective_chat
+    history = context.bot_data.get(f"chat_history_{chat.id}", [])
+
+    if not history or len(history) < 3:
+        await message.reply_text("📝 В чате пока недостаточно сообщений, чтобы подводить итоги! Пообщайтесь ещё немного.", parse_mode="Markdown")
+        return
+
+    try:
+        await context.bot.send_chat_action(chat_id=chat.id, action="typing")
+        summary_text = await groq_service.summarize_chat_history(history)
+        await message.reply_text(summary_text, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Error in cmd_summary: {e}")
+        await message.reply_text("😅 Не удалось составить выжимку чата.")

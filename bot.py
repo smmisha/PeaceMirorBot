@@ -70,6 +70,7 @@ async def post_init(application):
             BotCommand("ai", "Задать вопрос ИИ (/ai <вопрос>)"),
             BotCommand("meme", "Прислать смешной мем или картинку"),
             BotCommand("top", "Рейтинг Топ-10 Миротворцев чата"),
+            BotCommand("summary", "Итоги общения / Выжимка чата"),
             BotCommand("help", "Справка по командам"),
         ]
         await application.bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
@@ -141,6 +142,8 @@ def main():
     app.add_handler(CommandHandler("meme", user.cmd_meme))
     app.add_handler(CommandHandler("top", user.cmd_top))
     app.add_handler(CommandHandler("peacetop", user.cmd_top))
+    app.add_handler(CommandHandler("summary", user.cmd_summary))
+    app.add_handler(CommandHandler("digest", user.cmd_summary))
 
     # Admin Commands
     app.add_handler(CommandHandler("mute", admin.cmd_mute))

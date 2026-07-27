@@ -204,3 +204,36 @@ async def generate_ai_reply(user_prompt: str, user_name: str = "Участник
     except Exception as e:
         logger.error(f"Error generating AI reply via Groq: {e}")
         return "🤖 Извините, не удалось сформировать ответ. Попробуйте еще раз позже."
+
+
+async def summarize_chat_history(history: list[dict]) -> str:
+    """Summarizes chat history into structured highlights using Groq Llama 3.3 70B."""
+    if not history:
+        return "📝 В истории чата пока недостаточно сообщений для подведения итогов."
+
+    formatted_history = "\n".join([f"[{item['time']}] {item['name']}: {item['text']}" for item in history[-50:]])
+
+    system_prompt = (
+        "Ты — идеальный суммаризатор общения в Telegram чате.\n"
+        "Твоя задача — составить очень красивую, структурированную и интересную краткую выжимку (итоги) того, о чём только что разговаривали участники.\n\n"
+        "Формат ответа:\n"
+        "📝 **КРАТКАЯ СВОДКА ЧАТА:**\n\n"
+        "• 💬 **Главные темы**: (2-3 коротких пункта)\n"
+        "• 💡 **Ключевые мысли/итоги**: (главные тезисы разговора)\n"
+        "• 🕊️ **Атмосфера**: (коротко про настроение в чате)"
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Вот последние сообщения из чата:\n\n{formatted_history}"}
+            ],
+            temperature=0.4,
+            max_tokens=400,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error(f"Error generating chat summary: {e}")
+        return "😅 Упс, не удалось составить выжимку чата. Попробуйте чуть позже!"
