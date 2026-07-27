@@ -62,3 +62,32 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     if has_violation and matched_word:
         logger.info(f"Conflict/profanity detected in message/voice from user {message.from_user.id}: matched '{matched_word}'")
         await moderation.process_violation(update, context, matched_word)
+        return
+
+    # If no profanity violation, check if user explicitly called/addressed the bot
+    if message.text:
+        bot_username = context.bot.username or ""
+        is_reply_to_bot = (
+            message.reply_to_message
+            and message.reply_to_message.from_user
+            and message.reply_to_message.from_user.id == context.bot.id
+        )
+        is_mentioned = (
+            bot_username
+            and f"@{bot_username.lower()}" in message.text.lower()
+        )
+
+        if is_reply_to_bot or is_mentioned:
+            import re
+            prompt = message.text
+            if bot_username:
+                prompt = re.sub(rf'@{re.escape(bot_username)}', '', prompt, flags=re.IGNORECASE).strip()
+
+            if prompt:
+                logger.info(f"AI response requested by user {user.id} ({user.full_name}): '{prompt}'")
+                try:
+                    await context.bot.send_chat_action(chat_id=chat.id, action="typing")
+                    ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name)
+                    await message.reply_text(ai_reply, parse_mode="Markdown")
+                except Exception as e:
+                    logger.error(f"Error sending AI reply to user {user.id}: {e}")

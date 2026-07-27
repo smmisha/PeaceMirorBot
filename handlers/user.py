@@ -111,3 +111,28 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await notification.notify_admins(context, chat.id, report_text, event_key=event_key)
 
     await message.reply_text("✅ Ваша жалоба отправлена модераторам. Спасибо за помощь в поддержании мира в чате!")
+
+
+import groq_service
+
+async def cmd_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler for /ai command to directly ask AI a question."""
+    message = update.effective_message
+    if not message:
+        return
+
+    prompt = " ".join(context.args).strip() if context.args else ""
+    if not prompt and message.reply_to_message:
+        prompt = message.reply_to_message.text or ""
+
+    if not prompt:
+        await message.reply_text("💡 **Напишите вопрос к ИИ:**\nПример: `/ai что думаешь по поводу этого спора?`", parse_mode="Markdown")
+        return
+
+    user_name = message.from_user.full_name if message.from_user else "Участник"
+    try:
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+        ai_reply = await groq_service.generate_ai_reply(prompt, user_name)
+        await message.reply_text(ai_reply, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Error in cmd_ai: {e}")

@@ -36,6 +36,7 @@ async def post_init(application):
             BotCommand("rules", "Правила общения в чате"),
             BotCommand("mystats", "Моя статистика нарушений"),
             BotCommand("report", "Пожаловаться админам (ответом)"),
+            BotCommand("ai", "Задать вопрос ИИ (/ai <вопрос>)"),
             BotCommand("help", "Справка по командам"),
         ]
         await application.bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
@@ -100,6 +101,8 @@ def main():
     app.add_handler(CommandHandler("rules", user.cmd_rules))
     app.add_handler(CommandHandler("mystats", user.cmd_mystats))
     app.add_handler(CommandHandler("report", user.cmd_report))
+    app.add_handler(CommandHandler("ai", user.cmd_ai))
+    app.add_handler(CommandHandler("bot", user.cmd_ai))
 
     # Admin Commands
     app.add_handler(CommandHandler("mute", admin.cmd_mute))
