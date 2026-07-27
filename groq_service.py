@@ -24,19 +24,21 @@ def _get_groq_client() -> Optional[Groq]:
 
 
 async def fetch_meme() -> Tuple[Optional[str], str]:
-    """Fetches a random Russian meme photo URL and title (or cat photo as fallback)."""
-    import httpx, random
+    """Fetches a 100% Russian meme photo URL and title (or cat photo as fallback)."""
+    import httpx, random, re
     subreddits = ["Pikabu", "ru_memes"]
-    sub = random.choice(subreddits)
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"https://meme-api.com/gimme/{sub}")
-            if resp.status_code == 200:
-                data = resp.json()
-                url = data.get("url")
-                title = data.get("title", "🤪 Свежий мем")
-                if url and not data.get("nsfw", False):
-                    return url, f"🤣 {title}"
+            for _ in range(5):
+                sub = random.choice(subreddits)
+                resp = await client.get(f"https://meme-api.com/gimme/{sub}")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    url = data.get("url")
+                    title = data.get("title", "🤪 Свежий мем")
+                    # Enforce Russian Cyrillic title check to guarantee 100% Russian memes!
+                    if url and not data.get("nsfw", False) and re.search(r'[а-яёА-ЯЁ]', title):
+                        return url, f"🤣 {title}"
     except Exception as e:
         logger.warning(f"Error fetching Russian meme: {e}")
 
