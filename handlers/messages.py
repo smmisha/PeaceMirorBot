@@ -68,20 +68,40 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     # User wrote a clean message — add +1 peace point
     await database.add_peace_points(DB_PATH, user.id, user.username, 1)
 
-    # Check for thank-you / karma transfer replies (e.g. "+", "спасибо", "+1", "благодарю", "респект")
-    if message.reply_to_message and message.reply_to_message.from_user:
-        target_user = message.reply_to_message.from_user
-        if not target_user.is_bot and target_user.id != user.id and message.text:
-            text_clean = message.text.strip().lower()
-            thanks_triggers = ["+", "+1", "спасибо", "спсибо", "благодарю", "респект", "спасбо", "/thanks"]
-            if text_clean in thanks_triggers or any(text_clean.startswith(t) for t in ["спасибо", "благодарю", "респект"]):
-                new_pts = await database.add_peace_points(DB_PATH, target_user.id, target_user.username, 5)
+    # Check for thank-you / karma transfer (via reply OR mention like "спасибо @username", "+1 @username", "респект @username")
+    thanks_triggers = ["спасибо", "спсибо", "благодарю", "респект", "+1", "+", "плюс", "красавчик", "молодец", "/thanks"]
+    if message.text:
+        text_lower = message.text.strip().lower()
+        is_thanks = any(kw in text_lower for kw in thanks_triggers)
+
+        if is_thanks:
+            target_user = None
+            if message.reply_to_message and message.reply_to_message.from_user:
+                target_user = message.reply_to_message.from_user
+            elif message.entities:
+                for entity in message.entities:
+                    if entity.type == "mention":
+                        uname = message.text[entity.offset:entity.offset + entity.length].replace("@", "").strip()
+                        if uname:
+                            import aiosqlite
+                            async with aiosqlite.connect(DB_PATH) as db:
+                                db.row_factory = aiosqlite.Row
+                                async with db.execute("SELECT user_id, username FROM users WHERE LOWER(username) = ?", (uname.lower(),)) as cursor:
+                                    row = await cursor.fetchone()
+                                    if row:
+                                        target_user = type("UserObj", (), {"id": row["user_id"], "username": row["username"], "full_name": f"@{row['username']}", "is_bot": False})
+                    elif entity.type == "text_mention" and entity.user:
+                        target_user = entity.user
+
+            if target_user and not getattr(target_user, "is_bot", False) and target_user.id != user.id:
+                new_pts = await database.add_peace_points(DB_PATH, target_user.id, getattr(target_user, "username", None), 5)
                 badge, title = database.get_rank_title(new_pts)
                 sender_mention = f"[{user.full_name}](tg://user?id={user.id})"
-                target_mention = f"[{target_user.full_name}](tg://user?id={target_user.id})"
+                target_name = getattr(target_user, "full_name", f"ID {target_user.id}")
+                target_mention = f"[{target_name}](tg://user?id={target_user.id})" if hasattr(target_user, "id") else target_name
                 try:
                     await message.reply_text(
-                        f"🕊️ {sender_mention} выразил(а) благодарность! {target_mention} получает **+5 баллов Миротворца** (Всего: **{new_pts}** {badge}).",
+                        f"🕊️ {sender_mention} выразил(а) респект! {target_name} получает **+5 баллов Миротворца** (Всего: **{new_pts}** {badge}).",
                         parse_mode="Markdown"
                     )
                 except Exception:
