@@ -239,6 +239,10 @@ async def summarize_chat_history(history: list[dict]) -> str:
         "• 🕊️ **Атмосфера дня**: (коротко про настроение в чате)"
     )
 
+    client = _get_groq_client()
+    if not client:
+        return "🤖 AI модуль временно недоступен."
+
     try:
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
