@@ -102,9 +102,25 @@ LATIN_PROFANITY_REGEX = re.compile(
 )
 
 
+import unicodedata
+
+
+def clean_invisible(text: str) -> str:
+    """Removes invisible zero-width spaces, soft hyphens, and combining diacritics used for bypassing filters."""
+    text_nfkd = unicodedata.normalize('NFKD', text)
+    cleaned = []
+    for ch in text_nfkd:
+        cat = unicodedata.category(ch)
+        if cat in ('Mn', 'Cf') or ord(ch) in (0x200B, 0x200C, 0x200D, 0xFEFF, 0x00AD):
+            continue
+        cleaned.append(ch)
+    return "".join(cleaned)
+
+
 def normalize_text(text: str) -> str:
-    """Normalizes text by lowercasing and mapping Latin lookalikes."""
-    text_lower = text.lower()
+    """Normalizes text by lowercasing, stripping invisible chars, and mapping Latin lookalikes."""
+    text_clean = clean_invisible(text)
+    text_lower = text_clean.lower()
     normalized_chars = []
     for ch in text_lower:
         normalized_chars.append(CHAR_MAP.get(ch, ch))
@@ -124,30 +140,38 @@ def _is_safe_word(word: str) -> bool:
 def find_violation(text: str, custom_bad_words: Optional[List[str]] = None) -> Tuple[bool, Optional[str]]:
     """
     Checks message text for profanity, targeted insults, or custom bad words.
+    Counters invisible unicode, leetspeak, punctuation splitting, and homoglyph bypasses.
     Filters out safe words (e.g. "употреблять") to prevent false positives.
     Returns (has_violation, matched_word_or_reason).
     """
     if not text:
         return False, None
 
-    normalized = normalize_text(text)
-    collapsed = collapse_repeated(normalized)
+    text_clean = clean_invisible(text)
 
     # 0. Check Latin / Translit Profanity (e.g. xuy, pizda, blyat, etc.)
-    latin_match = LATIN_PROFANITY_REGEX.search(text)
+    latin_match = LATIN_PROFANITY_REGEX.search(text_clean)
     if latin_match:
         return True, latin_match.group(0)
 
-    # Extract individual words from normalized text
-    words = re.findall(r'[а-яёa-z0-9]+', normalized, re.IGNORECASE)
+    normalized = normalize_text(text_clean)
+    collapsed = collapse_repeated(normalized)
 
-    # 1. Check Russian Profanity Regex — word by word first (respects safe words)
-    for word in words:
-        if _is_safe_word(word):
-            continue
-        match = RUSSIAN_PROFANITY_REGEX.search(word)
-        if match:
-            return True, match.group(0)
+    # 1. Check punctuation/space stripped version (counters 'х.у.й', 'х_у_й', 'п-и-з-д-а')
+    stripped_symbolic = re.sub(r'[\.\,_\-\*\~\s\+\=\/\\]+', '', normalized)
+    stripped_collapsed = collapse_repeated(stripped_symbolic)
+
+    for check_str in (normalized, collapsed, stripped_symbolic, stripped_collapsed):
+        words = re.findall(r'[а-яёa-z0-9]+', check_str, re.IGNORECASE)
+        for word in words:
+            if _is_safe_word(word):
+                continue
+            match = RUSSIAN_PROFANITY_REGEX.search(word)
+            if match:
+                return True, match.group(0)
+            latin_m = LATIN_PROFANITY_REGEX.search(word)
+            if latin_m:
+                return True, latin_m.group(0)
 
     # 2. Check collapsed text word by word (for repeated character bypasses like "ххууйй")
     collapsed_words = re.findall(r'[а-яёa-z0-9]+', collapsed, re.IGNORECASE)
