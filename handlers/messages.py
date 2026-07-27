@@ -154,6 +154,15 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
             if random_tag_setting == "1":
                 import random, time
 
+                # FILTER 1: If user is replying to ANOTHER user, DO NOT INTERRUPT their conversation!
+                if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.id != context.bot.id:
+                    return
+
+                # FILTER 2: Do NOT trigger organic response on super short questions/phrases (<= 2 words or < 8 chars) like "Каким образом?"
+                words_count = len(message.text.strip().split())
+                if words_count <= 2 or len(message.text.strip()) < 8:
+                    return
+
                 # Cooldown per user: Bot will NOT cling to the same user within 10 minutes (600 seconds)
                 last_replied_map = context.bot_data.setdefault("user_ai_last_reply", {})
                 last_replied_time = last_replied_map.get(user.id, 0)
