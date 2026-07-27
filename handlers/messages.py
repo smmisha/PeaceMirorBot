@@ -75,11 +75,18 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     # User wrote a clean message — add +1 peace point
     await database.add_peace_points(DB_PATH, user.id, user.username, 1)
 
-    # Check for thank-you / karma transfer (via reply OR mention like "спасибо @username", "+1 @username", "респект @username")
-    thanks_triggers = ["спасибо", "спсибо", "благодарю", "респект", "+1", "+", "плюс", "красавчик", "молодец", "/thanks"]
+    # Check for thank-you / warmth / karma transfer (via reply OR mention)
+    thanks_triggers = [
+        "спасибо", "спсибо", "благодарю", "респект", "+1", "+", "плюс",
+        "красавчик", "молодец", "понял", "поняла", "обнял", "обняла",
+        "принял", "принято", "/thanks"
+    ]
+    heart_emojis = ["❤️", "💖", "🤍", "💕", "💜", "💙", "🖤", "💗", "💓", "💞", "💘", "🥰"]
+
     if message.text:
         text_lower = message.text.strip().lower()
-        is_thanks = any(kw in text_lower for kw in thanks_triggers)
+        has_heart = any(h in message.text for h in heart_emojis)
+        is_thanks = any(kw in text_lower for kw in thanks_triggers) or has_heart
 
         if is_thanks:
             target_user = None
@@ -101,13 +108,14 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
                         target_user = entity.user
 
             if target_user and not getattr(target_user, "is_bot", False) and target_user.id != user.id:
-                new_pts = await database.add_peace_points(DB_PATH, target_user.id, getattr(target_user, "username", None), 5)
+                pts_to_add = 5
+                new_pts = await database.add_peace_points(DB_PATH, target_user.id, getattr(target_user, "username", None), pts_to_add)
                 badge, title = database.get_rank_title(new_pts)
                 sender_mention = f"[{user.full_name}](tg://user?id={user.id})"
                 target_name = getattr(target_user, "full_name", f"ID {target_user.id}")
                 try:
                     await message.reply_text(
-                        f"🕊️ {sender_mention} выразил(а) респект! {target_name} получает **+5 к Репе** (Всего репы: **{new_pts}** {badge} {title}).",
+                        f"🕊️ {sender_mention} выразил(а) тепло и респект! {target_name} получает **+{pts_to_add} к Репе** (Всего репы: **{new_pts}** {badge} {title}).",
                         parse_mode="Markdown"
                     )
                 except Exception:
