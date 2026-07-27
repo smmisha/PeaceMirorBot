@@ -62,7 +62,8 @@ SAFE_WORDS: Set[str] = {
     "колебание", "колебания", "колебаний", "колебаться",
     "хлеб", "хлеба", "хлебушек", "жребий", "жребия", "серебро", "стебель", "гребень",
     "тебе", "себе", "мебель", "ребенок", "ребёнок", "ребята",
-    "требование", "требования", "потребитель",
+    "требование", "требования", "потребитель", "требуется", "требуют", "требую",
+    "небуду", "небудет", "небудем", "небудь", "чебурашка", "чебурек", "чебуреки",
     # Words containing "ругаться"
     "ругаться", "ругаются", "ругаюсь", "поругалась", "поругался", "ругань",
     # Words containing "дроч"
@@ -159,11 +160,16 @@ def find_violation(text: str, custom_bad_words: Optional[List[str]] = None) -> T
     normalized = normalize_text(text_clean)
     collapsed = collapse_repeated(normalized)
 
-    # 1. Check punctuation/space stripped version (counters 'х.у.й', 'х_у_й', 'п-и-з-д-а')
-    stripped_symbolic = re.sub(r'[\.\,_\-\*\~\s\+\=\/\\]+', '', normalized)
-    stripped_collapsed = collapse_repeated(stripped_symbolic)
+    # 1. Strip punctuation symbols (e.g. 'х.у.й', 'х_у_й', 'п-и-з-д-а') preserving space separation
+    punc_stripped = re.sub(r'[\.\,_\-\*\~\+\=\/\\]+', ' ', normalized)
+    punc_collapsed = collapse_repeated(punc_stripped)
 
-    for check_str in (normalized, collapsed, stripped_symbolic, stripped_collapsed):
+    # 2. Collapse single/double-letter spaced words (e.g. 'х у й' -> 'хуй') without merging normal words
+    spaced_collapsed = punc_stripped
+    for _ in range(5):
+        spaced_collapsed = re.sub(r'(\b[а-яa-z0-9]{1,2})\s+([а-яa-z0-9]{1,2})', r'\1\2', spaced_collapsed, flags=re.IGNORECASE)
+
+    for check_str in (normalized, collapsed, punc_stripped, punc_collapsed, spaced_collapsed):
         words = re.findall(r'[а-яёa-z0-9]+', check_str, re.IGNORECASE)
         for word in words:
             if _is_safe_word(word):
