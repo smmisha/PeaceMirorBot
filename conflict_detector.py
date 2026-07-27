@@ -68,6 +68,8 @@ SAFE_WORDS: Set[str] = {
     "ругаться", "ругаются", "ругаюсь", "поругалась", "поругался", "ругань",
     # Words containing "ерунда"
     "ерунда", "ерундой", "ерунду", "ерунде", "еруннда", "ерундистика",
+    # Euphemisms / Colloquial words
+    "капец", "пипец", "ппц", "капецц", "пипецц",
     # Words containing "дроч"
     "задрочить",  # keep only explicit forms, not "подросток" etc.
     # Words containing "тварь" — allow as animal term in some contexts
