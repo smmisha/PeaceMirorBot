@@ -96,6 +96,15 @@ async def reset_user_stats(db_path: str, user_id: int) -> bool:
         return True
 
 
+async def reset_all_users_stats(db_path: str) -> bool:
+    """Resets violations and mute status for ALL users in DB."""
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("UPDATE users SET violations = 0, is_muted = 0, muted_until = NULL")
+        await db.execute("UPDATE mutes SET is_active = 0")
+        await db.commit()
+        return True
+
+
 async def set_user_mute(db_path: str, chat_id: int, user_id: int, username: str, muted_until: datetime) -> None:
     """Records an active mute in DB."""
     until_str = muted_until.isoformat()

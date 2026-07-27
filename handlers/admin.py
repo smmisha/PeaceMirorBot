@@ -319,12 +319,18 @@ async def cmd_wordlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_resetstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command /resetstats [@username | user_id] (or as reply)."""
+    """Admin command /resetstats [@username | user_id | all] (or as reply)."""
     if not await is_admin(update, context):
         await update.message.reply_text("❌ У вас нет прав администратора.")
         return
 
     await _track_admin(update, context)
+
+    # Check if admin requested to reset ALL users at once (/resetstats all or /resetstats все)
+    if context.args and context.args[0].strip().lower() in ("all", "все", "*"):
+        await database.reset_all_users_stats(DB_PATH)
+        await update.effective_message.reply_text("🔄 **Статистика нарушений и все предупреждения для ВСЕХ пользователей чата успешно сброшены!**", parse_mode="Markdown")
+        return
 
     user_id, username, mention = await _resolve_target_user(update, context)
     if not user_id:
@@ -335,8 +341,8 @@ async def cmd_resetstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await update.message.reply_text(
-                "⚠️ Укажите пользователя ответом на сообщение или укажите `@username` / `ID`:\n"
-                "Пример: `/resetstats @username`",
+                "⚠️ Укажите пользователя ответом на сообщение, указав `@username` / `ID`, или сбросьте всех:\n"
+                "Пример: `/resetstats @username` или `/resetstats all`",
                 parse_mode="Markdown"
             )
         return
