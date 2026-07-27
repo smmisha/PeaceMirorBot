@@ -73,6 +73,8 @@ async def cmd_mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats = await database.get_user_stats(DB_PATH, user.id)
     violations = stats.get("violations", 0)
     is_muted = stats.get("is_muted", 0)
+    pts = stats.get("peace_points", 0)
+    badge, title = database.get_rank_title(pts)
 
     status_str = "🟢 Нет активных мутов"
     if is_muted:
@@ -81,7 +83,9 @@ async def cmd_mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = (
         f"📊 **Статистика участника [{user.full_name}](tg://user?id={user.id}):**\n\n"
-        f"• Количество нарушений/предупреждений: `{violations}`\n"
+        f"• Звание: {badge} **{title}**\n"
+        f"• Баллы Миротворца: `{pts}` 🕊️\n"
+        f"• Количество нарушений: `{violations}`\n"
         f"• Текущий статус: {status_str}"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -154,3 +158,32 @@ async def cmd_meme(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error sending meme: {e}")
         await message.reply_text("😅 Упс, не удалось отправить мем.")
+
+
+async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler for /top and /peacetop command to show top peacekeepers of the chat."""
+    message = update.effective_message
+    if not message:
+        return
+
+    top_users = await database.get_top_peacekeepers(DB_PATH, limit=10)
+    if not top_users:
+        await message.reply_text(
+            "🕊️ **Рейтинг Миротворцев пока пуст!**\nОбщайтесь вежливо и поддерживайте друг друга, чтобы заработать первые баллы кармы!",
+            parse_mode="Markdown"
+        )
+        return
+
+    lines = ["🏆 **ТОП-10 МИРОТВОРЦЕВ ЧАТА:**\n"]
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+
+    for idx, u in enumerate(top_users):
+        pts = u.get("peace_points", 0)
+        badge, title = database.get_rank_title(pts)
+        uname = u.get("username")
+        disp_name = f"@{uname}" if uname else f"ID: {u.get('user_id')}"
+        medal = medals[idx] if idx < len(medals) else f"{idx+1}."
+        lines.append(f"{medal} {disp_name} — **{pts}** баллов ({badge} {title})")
+
+    lines.append("\n✨ *Баллы начисляются за культурное общение, поддержку и благодарности в чате!*")
+    await message.reply_text("\n".join(lines), parse_mode="Markdown")

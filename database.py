@@ -48,6 +48,11 @@ async def init_db(db_path: str) -> bool:
     try:
         async with aiosqlite.connect(db_path) as db:
             await db.executescript(INIT_SQL)
+            # Migration: Add peace_points column to users table if missing
+            try:
+                await db.execute("ALTER TABLE users ADD COLUMN peace_points INTEGER DEFAULT 0")
+            except Exception:
+                pass  # Column already exists
             await db.commit()
         logger.info("Database schema initialized.")
         return True
@@ -267,3 +272,43 @@ async def set_setting(db_path: str, key: str, value: str) -> None:
     async with aiosqlite.connect(db_path) as db:
         await db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
         await db.commit()
+
+
+def get_rank_title(points: int) -> tuple[str, str]:
+    """Returns (badge_emoji, title_string) based on accumulated peace points."""
+    if points < 20:
+        return "🐣", "Участник чата"
+    elif points < 100:
+        return "🤝", "Добродушный соратник"
+    elif points < 300:
+        return "✨", "Хранитель Уюта"
+    elif points < 700:
+        return "🕊️", "Миротворец"
+    else:
+        return "👑", "Легендарный Миротворец"
+
+
+async def add_peace_points(db_path: str, user_id: int, username: str, points: int) -> int:
+    """Adds points to user's peace_points counter. Returns updated total points."""
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "INSERT INTO users (user_id, username, peace_points) VALUES (?, ?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET peace_points = MAX(0, peace_points + ?), username = COALESCE(?, username)",
+            (user_id, username, max(0, points), points, username)
+        )
+        await db.commit()
+        async with db.execute("SELECT peace_points FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+
+async def get_top_peacekeepers(db_path: str, limit: int = 10) -> list[dict]:
+    """Returns top users with highest peace_points."""
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT user_id, username, peace_points, violations FROM users WHERE peace_points > 0 ORDER BY peace_points DESC LIMIT ?",
+            (limit,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]

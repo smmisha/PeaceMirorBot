@@ -61,8 +61,31 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if has_violation and matched_word:
         logger.info(f"Conflict/profanity detected in message/voice from user {message.from_user.id}: matched '{matched_word}'")
+        await database.add_peace_points(DB_PATH, user.id, user.username, -15)
         await moderation.process_violation(update, context, matched_word)
         return
+
+    # User wrote a clean message — add +1 peace point
+    await database.add_peace_points(DB_PATH, user.id, user.username, 1)
+
+    # Check for thank-you / karma transfer replies (e.g. "+", "спасибо", "+1", "благодарю", "респект")
+    if message.reply_to_message and message.reply_to_message.from_user:
+        target_user = message.reply_to_message.from_user
+        if not target_user.is_bot and target_user.id != user.id and message.text:
+            text_clean = message.text.strip().lower()
+            thanks_triggers = ["+", "+1", "спасибо", "спсибо", "благодарю", "респект", "спасбо", "/thanks"]
+            if text_clean in thanks_triggers or any(text_clean.startswith(t) for t in ["спасибо", "благодарю", "респект"]):
+                new_pts = await database.add_peace_points(DB_PATH, target_user.id, target_user.username, 5)
+                badge, title = database.get_rank_title(new_pts)
+                sender_mention = f"[{user.full_name}](tg://user?id={user.id})"
+                target_mention = f"[{target_user.full_name}](tg://user?id={target_user.id})"
+                try:
+                    await message.reply_text(
+                        f"🕊️ {sender_mention} выразил(а) благодарность! {target_mention} получает **+5 баллов Миротворца** (Всего: **{new_pts}** {badge}).",
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    pass
 
     # If no profanity violation, check if user explicitly called/addressed the bot
     if message.text:
