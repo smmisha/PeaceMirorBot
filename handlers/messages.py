@@ -37,14 +37,6 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     user = message.from_user
     chat = update.effective_chat
 
-    # Skip moderation for admins (they are exempt from automatic punishment)
-    if user and chat:
-        if ADMIN_ID and user.id == ADMIN_ID:
-            return
-        if chat.type in ("group", "supergroup"):
-            if await _is_chat_admin(context, chat.id, user.id):
-                return
-
     text_to_check = message.text
 
     # Handle Voice Messages (Голосовые сообщения / ГС)

@@ -202,8 +202,8 @@ async def process_violation(
             )
         else:
             text = (
-                f"⚠️ Сообщение {user_mention} удалено за нарушения правил!\n"
-                f"📌 *Это ваше {new_count}-е нарушение.* (Требуется мут на {duration_str})."
+                f"⚠️ Сообщение {user_mention} удалено за нарушение правил!\n"
+                f"📌 *Это ваше {new_count}-е нарушение.* (По ограничениям Telegram бот не может применить режим чтения к администратору, но сообщение удалено)."
             )
 
         await context.bot.send_message(chat_id=chat.id, text=text, parse_mode="Markdown")
