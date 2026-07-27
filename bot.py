@@ -85,7 +85,13 @@ def main():
 
     logger.info(f"Starting PeaceMirorBot... Configured Admin ID: {ADMIN_ID}")
 
-    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
+    proxy_url = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY") or os.getenv("TELEGRAM_PROXY")
+    builder = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init)
+    if proxy_url:
+        logger.info(f"Configuring Telegram proxy: {proxy_url}")
+        builder = builder.proxy(proxy_url).get_updates_proxy(proxy_url)
+
+    app = builder.build()
 
     # User Commands
     app.add_handler(CommandHandler("start", user.cmd_start))
