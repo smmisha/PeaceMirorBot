@@ -24,21 +24,34 @@ def _get_groq_client() -> Optional[Groq]:
 
 
 async def fetch_meme() -> Tuple[Optional[str], str]:
-    """Fetches a 100% Russian meme photo URL and title (or cat photo as fallback)."""
+    """Fetches a 100% Russian, clean, non-profane, family-friendly meme photo URL and title."""
     import httpx, random, re
+    from conflict_detector import find_violation
     subreddits = ["Pikabu", "ru_memes"]
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            for _ in range(5):
+            for _ in range(8):
                 sub = random.choice(subreddits)
                 resp = await client.get(f"https://meme-api.com/gimme/{sub}")
                 if resp.status_code == 200:
                     data = resp.json()
                     url = data.get("url")
                     title = data.get("title", "🤪 Свежий мем")
-                    # Enforce Russian Cyrillic title check to guarantee 100% Russian memes!
-                    if url and not data.get("nsfw", False) and re.search(r'[а-яёА-ЯЁ]', title):
-                        return url, f"🤣 {title}"
+
+                    # Check 1: Must NOT be NSFW / Spoiler
+                    if data.get("nsfw", False) or data.get("spoiler", False):
+                        continue
+
+                    # Check 2: Must contain Russian Cyrillic text
+                    if not re.search(r'[а-яёА-ЯЁ]', title):
+                        continue
+
+                    # Check 3: MUST BE 100% CLEAN WITHOUT PROFANITY OR BAD WORDS!
+                    has_violation, _ = find_violation(title)
+                    if has_violation:
+                        continue
+
+                    return url, f"🤣 {title}"
     except Exception as e:
         logger.warning(f"Error fetching Russian meme: {e}")
 
