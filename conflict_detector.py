@@ -66,6 +66,8 @@ SAFE_WORDS: Set[str] = {
     "небуду", "небудет", "небудем", "небудь", "чебурашка", "чебурек", "чебуреки",
     # Words containing "ругаться"
     "ругаться", "ругаются", "ругаюсь", "поругалась", "поругался", "ругань",
+    # Words containing "ерунда"
+    "ерунда", "ерундой", "ерунду", "ерунде", "еруннда", "ерундистика",
     # Words containing "дроч"
     "задрочить",  # keep only explicit forms, not "подросток" etc.
     # Words containing "тварь" — allow as animal term in some contexts
