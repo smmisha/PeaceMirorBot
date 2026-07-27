@@ -123,8 +123,17 @@ def main():
 
     logger.info(f"Starting PeaceMirorBot... Configured Admin ID: {ADMIN_ID}")
 
-    proxy_url = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY") or os.getenv("TELEGRAM_PROXY")
-    builder = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init)
+    # Proxy: Only set if TELEGRAM_PROXY is explicitly specified (ignore default PA HTTP_PROXY for api.telegram.org)
+    proxy_url = os.getenv("TELEGRAM_PROXY")
+    builder = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .read_timeout(30)
+        .write_timeout(30)
+        .connect_timeout(30)
+        .get_updates_read_timeout(30)
+    )
     if proxy_url:
         logger.info(f"Configuring Telegram proxy: {proxy_url}")
         builder = builder.proxy(proxy_url).get_updates_proxy(proxy_url)
@@ -167,7 +176,13 @@ def main():
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE & group_filter, messages.handle_group_message))
 
     logger.info("Bot handlers registered. Starting long polling...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    while True:
+        try:
+            app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+        except Exception as e:
+            logger.error(f"Bot polling error: {e}. Restarting in 5s...")
+            import time
+            time.sleep(5)
 
 
 if __name__ == "__main__":
