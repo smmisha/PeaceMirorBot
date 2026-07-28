@@ -93,7 +93,45 @@ python bot.py
 python -m unittest test_conflict_detector -v
 ```
 
-### 4. Запуск в Docker
+### 5. Продакшен: PythonAnywhere
+
+Бот живёт на бесплатном аккаунте PythonAnywhere (`smmisha`), где **always-on tasks
+недоступны**, поэтому он запускается вручную из Bash-консоли через `nohup` и держится
+до тех пор, пока жива консоль. Консоль называется `@PeaceMirorBot`, рабочая папка —
+`~/PeaceMirorBot`.
+
+Запуск:
+```bash
+cd ~/PeaceMirorBot
+nohup python3 bot.py > bot.log 2>&1 &
+```
+
+Обновление до свежего кода (остановить → подтянуть → запустить заново):
+```bash
+cd ~/PeaceMirorBot
+kill $(pgrep -f "python3 bot.py")
+git pull origin main
+nohup python3 bot.py > bot.log 2>&1 &
+tail -n 20 bot.log      # ожидаем "Bot authenticated as @PeaceMirorBot" и "Application started"
+```
+
+Что важно помнить:
+
+- **Только один экземпляр.** Telegram отдаёт `409 Conflict: terminated by other getUpdates
+  request`, если бот параллельно запущен где-то ещё (например, локально). Перед локальным
+  запуском останавливайте продакшен — иначе оба инстанса дерутся за очередь обновлений,
+  а старт с `drop_pending_updates=True` отбросит накопившиеся апдейты.
+- **Консоль умирает — умирает бот.** PythonAnywhere прибивает консоли при перезагрузке
+  серверов и после долгого простоя; автоперезапуска нет, нужно зайти и поднять руками.
+  Непрерывная работа — это платный тариф с always-on task.
+- **CPU-квота.** При исчерпании квоты аккаунт уходит в tarpit: бот продолжает работать,
+  но ответы ИИ и расшифровка голосовых заметно замедляются.
+- **`bot.log` перетирается** при каждом запуске (`>`), историю за прошлый прогон
+  сохраняйте отдельно, если она нужна.
+- Миграции схемы БД применяются автоматически при старте в `init_db`, руками
+  ничего делать не надо.
+
+### 6. Запуск в Docker
 ```bash
 docker build -t peacemirrorbot .
 docker run -d --env-file .env peacemirrorbot
