@@ -106,6 +106,9 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     u_str = f"@{user.username}" if user.username else user.full_name
     await database.ensure_user_exists(DB_PATH, user.id, u_str)
 
+    # Счётчик для строки HEARTBEAT в логе
+    context.bot_data["messages_processed"] = context.bot_data.get("messages_processed", 0) + 1
+
     # Track last activity timestamp for 7-hour inactivity check (eyes emoji 👀)
     context.bot_data[f"last_msg_time_{chat.id}"] = time.time()
     context.bot_data[f"eyes_sent_{chat.id}"] = False

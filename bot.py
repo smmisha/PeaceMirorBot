@@ -39,8 +39,41 @@ async def job_check_chat_inactivity(context):
                 logger.warning(f"Failed to send 7h inactivity 👀 emoji to chat {chat_id}: {e}")
 
 
+def format_uptime(seconds: float) -> str:
+    """Форматирует аптайм в «1 д 03 ч 07 мин» для строки сердцебиения."""
+    total_minutes = int(seconds // 60)
+    days, rem_minutes = divmod(total_minutes, 1440)
+    hours, minutes = divmod(rem_minutes, 60)
+    if days:
+        return f"{days} д {hours:02d} ч {minutes:02d} мин"
+    if hours:
+        return f"{hours} ч {minutes:02d} мин"
+    return f"{minutes} мин"
+
+
+async def job_heartbeat(context):
+    """
+    Раз в 5 минут пишет в лог, что бот жив.
+
+    Успешные запросы к Telegram больше не логируются (в них светился токен),
+    поэтому у спокойного чата лог молчит часами — и по нему невозможно отличить
+    работающего бота от упавшего. Эта строка снимает вопрос.
+    """
+    import time
+    started_at = context.bot_data.get("started_at", time.time())
+    processed = context.bot_data.get("messages_processed", 0)
+    chats = len(context.bot_data.get("active_chats", set()))
+    logger.info(
+        f"HEARTBEAT: бот жив | аптайм {format_uptime(time.time() - started_at)} "
+        f"| сообщений обработано: {processed} | активных чатов: {chats}"
+    )
+
+
 async def post_init(application):
     """Callback run after application initialization to prepare database, background jobs, and bot menu commands."""
+    import time
+    application.bot_data["started_at"] = time.time()
+
     logger.info("Initializing database connection...")
     db_ok = await database.init_db(DB_PATH)
     if not db_ok:
@@ -59,6 +92,8 @@ async def post_init(application):
     # Schedule repeating 7-hour inactivity check job every 30 minutes
     if application.job_queue:
         application.job_queue.run_repeating(job_check_chat_inactivity, interval=1800, first=300, name="inactivity_check_job")
+        # Сердцебиение в лог каждые 5 минут — чтобы тишина не читалась как «бот умер»
+        application.job_queue.run_repeating(job_heartbeat, interval=300, first=60, name="heartbeat_job")
 
     # Register Bot Menu Commands in Telegram
     try:
