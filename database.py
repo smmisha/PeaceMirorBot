@@ -40,6 +40,14 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS chat_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    user_name TEXT NOT NULL,
+    message_text TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -312,3 +320,46 @@ async def get_top_peacekeepers(db_path: str, limit: int = 10) -> list[dict]:
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
+
+
+async def save_chat_message(db_path: str, chat_id: int, user_name: str, message_text: str):
+    """Saves a chat message to persistent SQLite storage for /summary."""
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                "INSERT INTO chat_history (chat_id, user_name, message_text) VALUES (?, ?, ?)",
+                (chat_id, user_name, message_text[:300])
+            )
+            # Prune ancient messages if table exceeds 300 entries for this chat
+            await db.execute(
+                "DELETE FROM chat_history WHERE chat_id = ? AND id NOT IN (SELECT id FROM chat_history WHERE chat_id = ? ORDER BY id DESC LIMIT 300)",
+                (chat_id, chat_id)
+            )
+            await db.commit()
+    except Exception as e:
+        logger.error(f"Error saving chat message to database: {e}")
+
+
+async def get_recent_chat_history(db_path: str, chat_id: int, limit: int = 150) -> list[dict]:
+    """Retrieves recent chat messages from persistent SQLite storage for /summary."""
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT user_name, message_text, created_at FROM chat_history WHERE chat_id = ? ORDER BY id DESC LIMIT ?",
+                (chat_id, limit)
+            )
+            rows = await cursor.fetchall()
+            history = []
+            for row in reversed(rows):
+                created_str = str(row["created_at"])
+                time_str = created_str.split()[1][:5] if " " in created_str else "00:00"
+                history.append({
+                    "name": row["user_name"],
+                    "text": row["message_text"],
+                    "time": time_str
+                })
+            return history
+    except Exception as e:
+        logger.error(f"Error reading chat history from database: {e}")
+        return []
