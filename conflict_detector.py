@@ -112,6 +112,33 @@ LATIN_PROFANITY_REGEX = re.compile(
 )
 
 
+# Strict Regex pattern for core Russian profanity (hard mat) - CANNOT BE WHITELISTED
+HARD_PROFANITY_REGEX = re.compile(
+    r'('
+    r'хуй|хуйн|хуя|хуе|хуё|хуи|хул|хуу|хер|'
+    r'пизд|пзд|пидар|пидор|'
+    r'бля|блят|бляд|'
+    r'еба|ебе|ебё|еби|ебан|ебат|ёба|ёбн|ебу|ебы|ебн|отъб|отъеб|'
+    r'мудак|мудил|'
+    r'гандон|гондон|'
+    r'долбоеб|долбоёб|'
+    r'залуп'
+    r')',
+    re.IGNORECASE
+)
+
+LATIN_HARD_PROFANITY_REGEX = re.compile(
+    r'('
+    r'xuy|xuj|huj|xui|xyi|xue|xuya|xuyn|huyn|xueta|hueta|xuesos|huesos|'
+    r'pizd|pzd|pizdet|pizdec|pizdos|pizdu|pizdat|pizdab|'
+    r'blyat|blyad|blia|blya|bliat|bliad|bitch|'
+    r'ebat|ebal|ebanut|ebalnik|ebani|ebala|ebuc|yebat|yebal|yeban|yebut|'
+    r'mudak|mudil|gandon|gondon'
+    r')',
+    re.IGNORECASE
+)
+
+
 import unicodedata
 
 
@@ -142,16 +169,54 @@ def collapse_repeated(text: str) -> str:
     return re.sub(r'(.)\1+', r'\1', text)
 
 
-def _is_safe_word(word: str) -> bool:
-    """Check if a word is in the safe words whitelist."""
-    return word.lower() in SAFE_WORDS
+def is_hard_profanity(word: str) -> bool:
+    """
+    Checks if a word is hard profanity (мат / leet profanity like пиздец, пздц, п3дц, хуй, etc.).
+    Hard profanity CANNOT be whitelisted or added to safe words under any circumstances!
+    """
+    if not word:
+        return False
+    text_clean = clean_invisible(word)
+    if LATIN_HARD_PROFANITY_REGEX.search(text_clean):
+        return True
+    normalized = normalize_text(text_clean)
+    collapsed = collapse_repeated(normalized)
+    punc_stripped = re.sub(r'[\.\,_\-\*\~\+\=\/\\]+', '', normalized)
+    punc_collapsed = collapse_repeated(punc_stripped)
+
+    for test_s in (normalized, collapsed, punc_stripped, punc_collapsed):
+        if HARD_PROFANITY_REGEX.search(test_s) or LATIN_HARD_PROFANITY_REGEX.search(test_s):
+            return True
+    return False
 
 
-def find_violation(text: str, custom_bad_words: Optional[List[str]] = None) -> Tuple[bool, Optional[str]]:
+def _is_safe_word(word: str, custom_allowed_words: Optional[List[str]] = None) -> bool:
+    """
+    Check if a word is in the safe words whitelist or custom allowed words.
+    Hard profanity NEVER returns True here.
+    """
+    w_lower = word.lower()
+    if is_hard_profanity(w_lower):
+        return False
+    if w_lower in SAFE_WORDS:
+        return True
+    if custom_allowed_words:
+        allowed_set = {w.strip().lower() for w in custom_allowed_words}
+        if w_lower in allowed_set:
+            return True
+    return False
+
+
+def find_violation(
+    text: str,
+    custom_bad_words: Optional[List[str]] = None,
+    custom_allowed_words: Optional[List[str]] = None
+) -> Tuple[bool, Optional[str]]:
     """
     Checks message text for profanity, targeted insults, or custom bad words.
     Counters invisible unicode, leetspeak, punctuation splitting, and homoglyph bypasses.
-    Filters out safe words (e.g. "употреблять") to prevent false positives.
+    Filters out safe words (e.g. "употреблять") and allowed words to prevent false positives,
+    UNLESS the word contains hard profanity.
     Returns (has_violation, matched_word_or_reason).
     """
     if not text:
@@ -161,7 +226,7 @@ def find_violation(text: str, custom_bad_words: Optional[List[str]] = None) -> T
 
     # 0. Check Latin / Translit Profanity (e.g. xuy, pizda, blyat, etc.)
     latin_match = LATIN_PROFANITY_REGEX.search(text_clean)
-    if latin_match:
+    if latin_match and not _is_safe_word(latin_match.group(0), custom_allowed_words):
         return True, latin_match.group(0)
 
     normalized = normalize_text(text_clean)
@@ -179,7 +244,7 @@ def find_violation(text: str, custom_bad_words: Optional[List[str]] = None) -> T
     for check_str in (normalized, collapsed, punc_stripped, punc_collapsed, spaced_collapsed):
         words = re.findall(r'[а-яёa-z0-9]+', check_str, re.IGNORECASE)
         for word in words:
-            if _is_safe_word(word):
+            if _is_safe_word(word, custom_allowed_words):
                 continue
             match = RUSSIAN_PROFANITY_REGEX.search(word)
             if match:
@@ -191,7 +256,7 @@ def find_violation(text: str, custom_bad_words: Optional[List[str]] = None) -> T
     # 2. Check collapsed text word by word (for repeated character bypasses like "ххууйй")
     collapsed_words = re.findall(r'[а-яёa-z0-9]+', collapsed, re.IGNORECASE)
     for word in collapsed_words:
-        if _is_safe_word(word):
+        if _is_safe_word(word, custom_allowed_words):
             continue
         match = RUSSIAN_PROFANITY_REGEX.search(word)
         if match:
@@ -200,7 +265,7 @@ def find_violation(text: str, custom_bad_words: Optional[List[str]] = None) -> T
     # 3. Check Custom Bad Words from DB
     if custom_bad_words:
         # Build text without safe words for custom checks
-        unsafe_words = [w for w in words if not _is_safe_word(w)]
+        unsafe_words = [w for w in words if not _is_safe_word(w, custom_allowed_words)]
         unsafe_text = " ".join(unsafe_words)
 
         for bw in custom_bad_words:
@@ -217,8 +282,9 @@ def find_violation(text: str, custom_bad_words: Optional[List[str]] = None) -> T
                 return True, bw
 
             # Also check collapsed version
-            unsafe_collapsed = " ".join(w for w in collapsed_words if not _is_safe_word(w))
+            unsafe_collapsed = " ".join(w for w in collapsed_words if not _is_safe_word(w, custom_allowed_words))
             if re.search(pattern, unsafe_collapsed, re.IGNORECASE):
                 return True, bw
 
     return False, None
+

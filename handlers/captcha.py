@@ -14,12 +14,36 @@ CAPTCHA_TIMEOUT_3M = 180   # 3 minutes for chat message auto-delete
 CAPTCHA_KICK_24H = 86400    # 24 hours before kicking unverified user
 
 
+async def _is_chat_admin(context, chat_id: int, user_id: int) -> bool:
+    """Checks if a user is an admin or owner in the chat."""
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        return member.status in (ChatMember.ADMINISTRATOR, ChatMember.OWNER)
+    except TelegramError:
+        return False
+
+
+def _safe_mention(full_name: str, user_id: int) -> str:
+    """Safely formats user mention string escaping Markdown special characters."""
+    escaped_name = (
+        full_name.replace("\\", "\\\\")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+        .replace("*", "\\*")
+        .replace("_", "\\_")
+        .replace("`", "\\`")
+    )
+    return f"[{escaped_name}](tg://user?id={user_id})"
+
+
 async def _process_user_captcha(context: ContextTypes.DEFAULT_TYPE, chat, user):
     """Internal helper to mute a user, send captcha message, and schedule 3m msg delete + 24h kick jobs."""
     if user.is_bot:
         return
 
     user_id = user.id
+    username_str = f"@{user.username}" if user.username else user.full_name
+    await database.ensure_user_exists(DB_PATH, user_id, username_str)
 
     # 0. CHECK IF USER HAS AN ACTIVE PUNISHMENT MUTE IN DATABASE!
     active_mute = await database.get_active_user_mute(DB_PATH, chat.id, user_id)
@@ -41,7 +65,7 @@ async def _process_user_captcha(context: ContextTypes.DEFAULT_TYPE, chat, user):
                 remaining_minutes = max(1, int((muted_until_dt - now_dt).total_seconds() // 60))
                 duration_str = format_mute_duration(remaining_minutes)
 
-                user_mention = f"[{user.full_name}](tg://user?id={user_id})"
+                user_mention = _safe_mention(user.full_name, user_id)
                 await context.bot.send_message(
                     chat_id=chat.id,
                     text=(
@@ -59,14 +83,14 @@ async def _process_user_captcha(context: ContextTypes.DEFAULT_TYPE, chat, user):
     job_3m_name = f"captcha_timeout_3m_{chat.id}_{user_id}"
     job_24h_name = f"captcha_kick_24h_{chat.id}_{user_id}"
 
-    existing_3m = context.job_queue.get_jobs_by_name(job_3m_name)
-    existing_24h = context.job_queue.get_jobs_by_name(job_24h_name)
+    existing_3m = context.job_queue.get_jobs_by_name(job_3m_name) if context.job_queue else []
+    existing_24h = context.job_queue.get_jobs_by_name(job_24h_name) if context.job_queue else []
 
     if existing_3m or existing_24h:
         logger.info(f"Captcha already active for user {user.full_name} ({user_id}) in chat {chat.id}, skipping duplicate.")
         return
 
-    user_mention = f"[{user.full_name}](tg://user?id={user_id})"
+    user_mention = _safe_mention(user.full_name, user_id)
 
     # 1. Immediately restrict user permissions (mute)
     try:
@@ -90,37 +114,54 @@ async def _process_user_captcha(context: ContextTypes.DEFAULT_TYPE, chat, user):
     )
 
     try:
-        captcha_msg = await context.bot.send_message(
-            chat_id=chat.id,
-            text=caption,
-            reply_markup=keyboard,
-            parse_mode="Markdown"
-        )
+        try:
+            captcha_msg = await context.bot.send_message(
+                chat_id=chat.id,
+                text=caption,
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.warning(f"Markdown send failed for captcha user {user_id}: {e}. Retrying plain text fallback.")
+            plain_caption = (
+                f"👋 Welcome, {user.full_name}!\n\n"
+                f"Для защиты чата от автоматических ботов, пожалуйста, подтвердите, что вы человек.\n"
+                f"Нажмите на кнопку ниже в течение 3 минут."
+            )
+            captcha_msg = await context.bot.send_message(
+                chat_id=chat.id,
+                text=plain_caption,
+                reply_markup=keyboard
+            )
+
+        # Save active captcha message into persistent SQLite DB
+        await database.save_active_captcha(DB_PATH, chat.id, user_id, captcha_msg.message_id)
 
         # 3. Schedule Stage 1 (3m delete public message)
-        context.job_queue.run_once(
-            job_captcha_timeout_3m,
-            when=CAPTCHA_TIMEOUT_3M,
-            data={
-                "chat_id": chat.id,
-                "user_id": user_id,
-                "user_name": user.full_name,
-                "captcha_msg_id": captcha_msg.message_id
-            },
-            name=job_3m_name
-        )
+        if context.job_queue:
+            context.job_queue.run_once(
+                job_captcha_timeout_3m,
+                when=CAPTCHA_TIMEOUT_3M,
+                data={
+                    "chat_id": chat.id,
+                    "user_id": user_id,
+                    "user_name": user.full_name,
+                    "captcha_msg_id": captcha_msg.message_id
+                },
+                name=job_3m_name
+            )
 
-        # 4. Schedule Stage 2 (24h kick if unverified)
-        context.job_queue.run_once(
-            job_captcha_kick_24h,
-            when=CAPTCHA_KICK_24H,
-            data={
-                "chat_id": chat.id,
-                "user_id": user_id,
-                "user_name": user.full_name
-            },
-            name=job_24h_name
-        )
+            # 4. Schedule Stage 2 (24h kick if unverified)
+            context.job_queue.run_once(
+                job_captcha_kick_24h,
+                when=CAPTCHA_KICK_24H,
+                data={
+                    "chat_id": chat.id,
+                    "user_id": user_id,
+                    "user_name": user.full_name
+                },
+                name=job_24h_name
+            )
     except Exception as e:
         logger.error(f"Error sending captcha message for user {user_id}: {e}")
 
@@ -164,14 +205,6 @@ async def handle_chat_member_updated(update: Update, context: ContextTypes.DEFAU
         await _process_user_captcha(context, result.chat, user)
 
 
-async def handle_captcha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Handles button presses for captcha verification.
-    """
-    query = update.callback_query
-    if not query or not query.data:
-        return
-
 async def approve_user_captcha(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> bool:
     """Unmutes user, removes pending captcha jobs, and restores writing permissions."""
     try:
@@ -183,10 +216,13 @@ async def approve_user_captcha(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
     except Exception as e:
         logger.error(f"Error restoring permissions for user {user_id}: {e}")
 
-    job_3m_name = f"captcha_timeout_3m_{chat_id}_{user_id}"
-    job_24h_name = f"captcha_kick_24h_{chat_id}_{user_id}"
-    for job in context.job_queue.get_jobs_by_name(job_3m_name) + context.job_queue.get_jobs_by_name(job_24h_name):
-        job.schedule_removal()
+    await database.remove_active_captcha(DB_PATH, chat_id, user_id)
+
+    if context.job_queue:
+        job_3m_name = f"captcha_timeout_3m_{chat_id}_{user_id}"
+        job_24h_name = f"captcha_kick_24h_{chat_id}_{user_id}"
+        for job in context.job_queue.get_jobs_by_name(job_3m_name) + context.job_queue.get_jobs_by_name(job_24h_name):
+            job.schedule_removal()
 
     return True
 
@@ -217,33 +253,35 @@ async def handle_captcha_button(update: Update, context: ContextTypes.DEFAULT_TY
 
     if is_admin_click and clicker_user.id != target_user_id:
         await query.answer("✅ Капча у пользователя успешно снята администратором!", show_alert=False)
-        text_out = f"🟢 Администратор [{clicker_user.full_name}](tg://user?id={clicker_user.id}) вручную снял капчу у пользователя."
+        text_out = f"🟢 Администратор {_safe_mention(clicker_user.full_name, clicker_user.id)} вручную снял капчу у пользователя."
     else:
         await query.answer("✅ Капча успешно пройдена! Добро пожаловать!", show_alert=False)
-        user_mention = f"[{clicker_user.full_name}](tg://user?id={clicker_user.id})"
+        user_mention = _safe_mention(clicker_user.full_name, clicker_user.id)
         text_out = f"🟢 {user_mention} успешно прошел/прошла проверку капчи. Приятного общения!"
 
     # Delete the captcha message
     if query.message:
         try:
             await query.message.delete()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Could not delete captcha message on button click: {e}")
 
     # Send temporary welcome text (auto-deletes after 10 seconds)
-    welcome = await context.bot.send_message(
-        chat_id=chat.id,
-        text=text_out,
-        parse_mode="Markdown"
-    )
-
-    # Schedule deletion of welcome message
-    context.job_queue.run_once(
-        job_delete_message,
-        when=10,
-        data={"chat_id": chat.id, "msg_id": welcome.message_id},
-        name=f"del_welcome_{chat.id}_{welcome.message_id}"
-    )
+    try:
+        welcome = await context.bot.send_message(
+            chat_id=chat.id,
+            text=text_out,
+            parse_mode="Markdown"
+        )
+        if context.job_queue:
+            context.job_queue.run_once(
+                job_delete_message,
+                when=10,
+                data={"chat_id": chat.id, "msg_id": welcome.message_id},
+                name=f"del_welcome_{chat.id}_{welcome.message_id}"
+            )
+    except Exception as e:
+        logger.warning(f"Failed sending captcha welcome message: {e}")
 
 
 async def job_captcha_timeout_3m(context: ContextTypes.DEFAULT_TYPE):
@@ -258,10 +296,32 @@ async def job_captcha_timeout_3m(context: ContextTypes.DEFAULT_TYPE):
 
     try:
         await context.bot.delete_message(chat_id=chat_id, message_id=captcha_msg_id)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Could not delete 3m captcha message {captcha_msg_id} in chat {chat_id}: {e}")
 
+    await database.remove_active_captcha(DB_PATH, chat_id, user_id)
     logger.info(f"Stage 1: 3m captcha message deleted for user {user_id} in chat {chat_id}. User remains muted (24h kick timer active).")
+
+
+async def job_cleanup_expired_captchas(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Background job running every 60s to clean up captcha messages older than 3 minutes (180s)
+    from SQLite, guaranteeing deletion even after bot restarts.
+    """
+    try:
+        expired = await database.get_expired_captchas(DB_PATH, CAPTCHA_TIMEOUT_3M)
+        for item in expired:
+            c_id = item["chat_id"]
+            u_id = item["user_id"]
+            m_id = item["message_id"]
+            try:
+                await context.bot.delete_message(chat_id=c_id, message_id=m_id)
+                logger.info(f"Background cleanup deleted expired captcha message {m_id} for user {u_id} in chat {c_id}.")
+            except Exception as e:
+                logger.warning(f"Background cleanup: failed to delete captcha message {m_id} in chat {c_id}: {e}")
+            await database.remove_active_captcha(DB_PATH, c_id, u_id)
+    except Exception as e:
+        logger.error(f"Error in job_cleanup_expired_captchas: {e}")
 
 
 async def job_captcha_kick_24h(context: ContextTypes.DEFAULT_TYPE):

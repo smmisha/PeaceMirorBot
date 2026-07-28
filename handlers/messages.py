@@ -37,6 +37,10 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     user = message.from_user
     chat = update.effective_chat
 
+    if user:
+        u_str = f"@{user.username}" if user.username else user.full_name
+        await database.ensure_user_exists(DB_PATH, user.id, u_str)
+
     import time
     # Track last activity timestamp for 7-hour inactivity check (eyes emoji 👀)
     context.bot_data[f"last_msg_time_{chat.id}"] = time.time()
@@ -72,10 +76,11 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     if text_to_check and not text_to_check.startswith("/"):
         await database.save_chat_message(DB_PATH, chat.id, user.full_name, text_to_check[:300])
 
-    # Retrieve custom bad words from database
+    # Retrieve custom bad words and custom allowed words from database
     custom_bad_words = await database.get_bad_words(DB_PATH)
+    custom_allowed_words = await database.get_allowed_words(DB_PATH)
 
-    has_violation, matched_word = find_violation(text_to_check, custom_bad_words)
+    has_violation, matched_word = find_violation(text_to_check, custom_bad_words, custom_allowed_words)
 
     if has_violation and matched_word:
         logger.info(f"Conflict/profanity detected in message/voice from user {message.from_user.id}: matched '{matched_word}'")

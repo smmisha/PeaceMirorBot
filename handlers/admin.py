@@ -29,27 +29,37 @@ import re
 async def _resolve_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Resolves the target user for an admin command from:
-    1. Reply to user message.
-    2. Reply to bot notification message (extracts mentioned user from entities/link).
-    3. Command arguments (@username or user_id).
+    1. Direct text_mention entity in the command message (e.g. tagging a user without @username via Telegram dropdown).
+    2. Reply to user message or reply to bot notification message.
+    3. Command arguments (@username, nickname, or user_id).
     Returns (user_id, username, mention_str).
     """
     message = update.effective_message
+    if not message:
+        return None, None, None
 
-    # Option 1 & 2: Reply to message
-    if message and message.reply_to_message:
+    # Priority 1: Check if command message itself has a text_mention entity (e.g. user selected from Telegram dropdown like "Анна")
+    if message.entities:
+        for entity in message.entities:
+            if entity.type == "text_mention" and entity.user:
+                target = entity.user
+                username = f"@{target.username}" if target.username else target.full_name
+                mention = f"[{target.full_name}](tg://user?id={target.id})"
+                return target.id, username, mention
+
+    # Priority 2: Reply to user message or reply to bot notification message
+    if message.reply_to_message:
         reply_msg = message.reply_to_message
         u = reply_msg.from_user
 
-        # Option 1: Reply directly to a regular user message
+        # Option A: Reply directly to a regular user message
         if u and not u.is_bot:
             username = f"@{u.username}" if u.username else u.full_name
             mention = f"[{u.full_name}](tg://user?id={u.id})"
             return u.id, username, mention
 
-        # Option 2: Reply to a BOT notification message (e.g. "[Удалённое сообщение]" or mute notice)
+        # Option B: Reply to a BOT notification message (e.g. "[Удалённое сообщение]" or mute notice)
         if reply_msg.entities or reply_msg.text:
-            # Check text_mention entities first
             if reply_msg.entities:
                 for entity in reply_msg.entities:
                     if entity.type == "text_mention" and entity.user:
@@ -58,7 +68,6 @@ async def _resolve_target_user(update: Update, context: ContextTypes.DEFAULT_TYP
                         mention = f"[{target.full_name}](tg://user?id={target.id})"
                         return target.id, username, mention
 
-            # Check tg://user?id= regex in message text
             msg_text = reply_msg.text or reply_msg.caption or ""
             match = re.search(r'tg://user\?id=(\d+)', msg_text)
             if match:
@@ -68,8 +77,9 @@ async def _resolve_target_user(update: Update, context: ContextTypes.DEFAULT_TYP
                 mention = f"[{username}](tg://user?id={target_id})"
                 return target_id, username, mention
 
-    # Option 3: Command arguments (@username or user_id)
+    # Priority 3: Command arguments (@username, nickname, or user_id)
     if context.args:
+        chat = update.effective_chat
         for arg in context.args:
             raw = arg.strip()
             if raw.isdigit():
@@ -78,26 +88,13 @@ async def _resolve_target_user(update: Update, context: ContextTypes.DEFAULT_TYP
                 username = stats.get("username") or f"ID: {user_id}"
                 mention = f"[{username}](tg://user?id={user_id})"
                 return user_id, username, mention
-            elif raw.startswith("@"):
-                target_username = raw[1:].lower()
-                async with database.aiosqlite.connect(DB_PATH) as db:
-                    async with db.execute(
-                        "SELECT user_id, username FROM users WHERE LOWER(username) = ?",
-                        (f"@{target_username}",)
-                    ) as cursor:
-                        row = await cursor.fetchone()
-                        if row:
-                            return row[0], row[1], f"[{row[1]}](tg://user?id={row[0]})"
 
-                    async with db.execute(
-                        "SELECT user_id, username FROM mutes WHERE LOWER(username) = ?",
-                        (f"@{target_username}",)
-                    ) as cursor:
-                        row = await cursor.fetchone()
-                        if row:
-                            return row[0], row[1], f"[{row[1]}](tg://user?id={row[0]})"
+            found = await database.find_user_by_name_or_alias(DB_PATH, chat.id if chat else 0, raw)
+            if found:
+                u_id, u_name = found
+                return u_id, u_name, f"[{u_name}](tg://user?id={u_id})"
 
-                return None, raw, raw
+            return None, raw, f"`{raw}`"
 
     return None, None, None
 
@@ -318,6 +315,74 @@ async def cmd_wordlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📋 **Кастомный стоп-лист слов ({len(words)}):**\n\n{words_formatted}", parse_mode="Markdown")
 
 
+async def cmd_addsafeword(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command /addsafeword <word> (or /allowword)."""
+    if not await is_admin(update, context):
+        await update.message.reply_text("❌ У вас нет прав администратора.")
+        return
+
+    await _track_admin(update, context)
+
+    if not context.args:
+        await update.message.reply_text("⚠️ Укажите слово: `/addsafeword <слово>`", parse_mode="Markdown")
+        return
+
+    word = " ".join(context.args).strip().lower()
+
+    # CRITICAL VALIDATION: Hard profanity (мат) CANNOT be added to allowed words under any circumstances!
+    from conflict_detector import is_hard_profanity
+    if is_hard_profanity(word):
+        await update.message.reply_text(
+            f"❌ **Слово `{word}` является матом или его разновидностью!**\n"
+            f"Матерные слова (включая `пиздец`, `пздц`, `п3дц`, `хуй`, `ебать` и т.д.) категорически запрещено добавлять в разрешённые.",
+            parse_mode="Markdown"
+        )
+        return
+
+    success = await database.add_allowed_word(DB_PATH, word)
+    if success:
+        await update.message.reply_text(f"✅ Слово `{word}` успешно добавлено в список разрешённых слов.", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(f"⚠️ Слово `{word}` уже есть в списке разрешённых.", parse_mode="Markdown")
+
+
+async def cmd_removesafeword(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command /removesafeword <word>."""
+    if not await is_admin(update, context):
+        await update.message.reply_text("❌ У вас нет прав администратора.")
+        return
+
+    await _track_admin(update, context)
+
+    if not context.args:
+        await update.message.reply_text("⚠️ Укажите слово: `/removesafeword <слово>`", parse_mode="Markdown")
+        return
+
+    word = " ".join(context.args).strip().lower()
+    success = await database.remove_allowed_word(DB_PATH, word)
+    if success:
+        await update.message.reply_text(f"✅ Слово `{word}` удалено из списка разрешённых слов.", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(f"⚠️ Слово `{word}` не найдено в списке разрешённых.", parse_mode="Markdown")
+
+
+async def cmd_safewordlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command /safewordlist."""
+    if not await is_admin(update, context):
+        await update.message.reply_text("❌ У вас нет прав администратора.")
+        return
+
+    await _track_admin(update, context)
+
+    words = await database.get_allowed_words(DB_PATH)
+    if not words:
+        await update.message.reply_text("📋 Список разрешённых слов пуст.")
+        return
+
+    words_formatted = "\n".join(f"• `{w}`" for w in words)
+    await update.message.reply_text(f"📋 **Список разрешённых слов ({len(words)}):**\n\n{words_formatted}", parse_mode="Markdown")
+
+
 async def cmd_resetstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command /resetstats [@username | user_id | all] (or as reply)."""
     if not await is_admin(update, context):
@@ -436,11 +501,18 @@ async def cmd_uncaptcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id, username, mention = await _resolve_target_user(update, context)
     if not user_id:
-        await update.message.reply_text(
-            "⚠️ Укажите пользователя ответом на сообщение или `@username` / `ID`:\n"
-            "Пример: `/uncaptcha @username`",
-            parse_mode="Markdown"
-        )
+        if username and username.startswith("@"):
+            await update.message.reply_text(
+                f"❌ Пользователь `{username}` ещё не зафиксирован в базе бота (ему нужно отправить хотя бы одно сообщение или перезайти).\n"
+                f"Снимите капчу ответом на его сообщение в чате или укажите его Telegram ID.",
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text(
+                "⚠️ Укажите пользователя ответом на сообщение или `@username` / `ID`:\n"
+                "Пример: `/uncaptcha @username` или `/uncaptcha 12345678`",
+                parse_mode="Markdown"
+            )
         return
 
     from handlers.captcha import approve_user_captcha

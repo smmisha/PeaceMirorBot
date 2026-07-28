@@ -89,6 +89,9 @@ async def post_init(application):
             BotCommand("addword", "Добавить слово в стоп-лист (/addword <слово>)"),
             BotCommand("removeword", "Удалить слово из стоп-листа"),
             BotCommand("wordlist", "Показать стоп-лист слов"),
+            BotCommand("addsafeword", "Добавить слово в разрешённые (/addsafeword <слово>)"),
+            BotCommand("removesafeword", "Удалить слово из разрешённых"),
+            BotCommand("safewordlist", "Показать список разрешённых слов"),
             BotCommand("resetstats", "Сбросить статистику (/resetstats @username | all)"),
             BotCommand("chattag", "Вкл/Выкл случайные отклики ИИ (/chattag on/off)"),
             BotCommand("uncaptcha", "Снять капчу с пользователя (/uncaptcha @username)"),
@@ -106,6 +109,13 @@ async def post_init(application):
             interval=60,
             first=10,
             name="job_check_expired_mutes"
+        )
+        # Clean up expired captchas (>3 minutes old) every 60 seconds
+        application.job_queue.run_repeating(
+            captcha.job_cleanup_expired_captchas,
+            interval=60,
+            first=15,
+            name="job_cleanup_expired_captchas"
         )
         # Reset inactive violation counters daily
         application.job_queue.run_repeating(
@@ -165,6 +175,11 @@ def main():
     app.add_handler(CommandHandler("addword", admin.cmd_addword))
     app.add_handler(CommandHandler("removeword", admin.cmd_removeword))
     app.add_handler(CommandHandler("wordlist", admin.cmd_wordlist))
+    app.add_handler(CommandHandler("addsafeword", admin.cmd_addsafeword))
+    app.add_handler(CommandHandler("allowword", admin.cmd_addsafeword))
+    app.add_handler(CommandHandler("removesafeword", admin.cmd_removesafeword))
+    app.add_handler(CommandHandler("disallowword", admin.cmd_removesafeword))
+    app.add_handler(CommandHandler("safewordlist", admin.cmd_safewordlist))
     app.add_handler(CommandHandler("resetstats", admin.cmd_resetstats))
     app.add_handler(CommandHandler("chattag", admin.cmd_chattag))
     app.add_handler(CommandHandler("uncaptcha", admin.cmd_uncaptcha))
@@ -173,7 +188,7 @@ def main():
     # Captcha Handlers for New Chat Members (both member updates and service messages)
     app.add_handler(ChatMemberHandler(captcha.handle_chat_member_updated, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha.handle_new_chat_members))
-    app.add_handler(CallbackQueryHandler(captcha.handle_captcha_callback, pattern=r"^captcha_pass_"))
+    app.add_handler(CallbackQueryHandler(captcha.handle_captcha_button, pattern=r"^captcha_pass_"))
 
     # Group Messages Handler (text, voice, stickers, photos, and animations)
     group_filter = ((filters.TEXT | filters.VOICE | filters.Sticker.ALL | filters.PHOTO | filters.ANIMATION) & ~filters.COMMAND)

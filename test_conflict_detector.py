@@ -1,16 +1,26 @@
 import unittest
-from conflict_detector import normalize_text, collapse_repeated, find_violation
+from conflict_detector import normalize_text, collapse_repeated, find_violation, is_hard_profanity
 
 
 class TestConflictDetector(unittest.TestCase):
 
     def test_normalize_text(self):
-        self.assertEqual(normalize_text("xyp"), "хур")
-        self.assertEqual(normalize_text("xуй"), "хуй")
+        self.assertEqual(normalize_text("xuy"), "хуу")
+        self.assertEqual(normalize_text("xui"), "хуи")
 
     def test_collapse_repeated(self):
         self.assertEqual(collapse_repeated("хххуууййй"), "хуй")
         self.assertEqual(collapse_repeated("приветтт"), "привет")
+
+    def test_is_hard_profanity(self):
+        self.assertTrue(is_hard_profanity("пиздец"))
+        self.assertTrue(is_hard_profanity("пздц"))
+        self.assertTrue(is_hard_profanity("п3дц"))
+        self.assertTrue(is_hard_profanity("хуй"))
+        self.assertTrue(is_hard_profanity("xuy"))
+        self.assertTrue(is_hard_profanity("ебать"))
+        self.assertFalse(is_hard_profanity("тварь"))
+        self.assertFalse(is_hard_profanity("рисунок"))
 
     def test_profanity_detection(self):
         test_cases = [
@@ -37,6 +47,19 @@ class TestConflictDetector(unittest.TestCase):
         has_violation, _ = find_violation("Нормальный текст без нарушений", custom_bad_words=custom)
         self.assertFalse(has_violation)
 
+    def test_custom_allowed_words(self):
+        # Non-profanity words CAN be whitelisted
+        allowed = ["тварь"]
+        has_violation, _ = find_violation("Какая интересная тварь", custom_allowed_words=allowed)
+        self.assertFalse(has_violation)
+
+        # Hard profanity CANNOT be whitelisted even if present in allowed list
+        allowed_fake = ["пиздец", "пздц"]
+        has_violation, matched = find_violation("Полный пиздец", custom_allowed_words=allowed_fake)
+        self.assertTrue(has_violation)
+        self.assertEqual(matched, "пиздец")
+
 
 if __name__ == "__main__":
     unittest.main()
+

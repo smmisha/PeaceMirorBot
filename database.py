@@ -48,6 +48,17 @@ CREATE TABLE IF NOT EXISTS chat_history (
     message_text TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS allowed_words (
+    word TEXT PRIMARY KEY
+);
+
+CREATE TABLE IF NOT EXISTS captchas (
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (chat_id, user_id)
+);
 """
 
 
@@ -67,6 +78,23 @@ async def init_db(db_path: str) -> bool:
     except Exception as e:
         logger.critical(f"Database initialization failed: {e}")
         return False
+
+
+async def ensure_user_exists(db_path: str, user_id: int, username: str | None = None) -> None:
+    """Inserts or updates user in DB so @username can be resolved by admin commands."""
+    uname = username if username else None
+    if uname and not uname.startswith("@") and not uname.startswith("ID:"):
+        uname = f"@{uname}"
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            """
+            INSERT INTO users (user_id, username) VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = COALESCE(excluded.username, users.username)
+            """,
+            (user_id, uname)
+        )
+        await db.commit()
 
 
 async def record_violation(db_path: str, user_id: int, username: str) -> int:
@@ -370,3 +398,114 @@ async def get_recent_chat_history(db_path: str, chat_id: int, limit: int = 150) 
     except Exception as e:
         logger.error(f"Error reading chat history from database: {e}")
         return []
+
+
+async def add_allowed_word(db_path: str, word: str) -> bool:
+    """Adds a custom allowed word to DB."""
+    word_clean = word.strip().lower()
+    if not word_clean:
+        return False
+    async with aiosqlite.connect(db_path) as db:
+        try:
+            await db.execute("INSERT INTO allowed_words (word) VALUES (?)", (word_clean,))
+            await db.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+
+async def remove_allowed_word(db_path: str, word: str) -> bool:
+    """Removes a custom allowed word from DB."""
+    word_clean = word.strip().lower()
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("DELETE FROM allowed_words WHERE word = ?", (word_clean,))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_allowed_words(db_path: str) -> list[str]:
+    """Retrieves all custom allowed words from DB."""
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute("SELECT word FROM allowed_words ORDER BY word ASC") as cursor:
+            rows = await cursor.fetchall()
+            return [r[0] for r in rows]
+
+
+async def save_active_captcha(db_path: str, chat_id: int, user_id: int, message_id: int):
+    """Saves or updates active captcha message for a user in SQLite."""
+    now_str = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            """
+            INSERT INTO captchas (chat_id, user_id, message_id, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                message_id = excluded.message_id,
+                created_at = excluded.created_at
+            """,
+            (chat_id, user_id, message_id, now_str)
+        )
+        await db.commit()
+
+
+async def remove_active_captcha(db_path: str, chat_id: int, user_id: int):
+    """Removes active captcha entry for a user from SQLite."""
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("DELETE FROM captchas WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
+        await db.commit()
+
+
+async def get_expired_captchas(db_path: str, timeout_seconds: int = 180) -> list[dict]:
+    """Returns captchas older than timeout_seconds."""
+    cutoff_str = (datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)).isoformat()
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT chat_id, user_id, message_id FROM captchas WHERE created_at <= ?",
+            (cutoff_str,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def find_user_by_name_or_alias(db_path: str, chat_id: int, query_str: str) -> tuple[int, str] | None:
+    """
+    Finds user_id and username by @username, raw nickname, or display name across users and mutes.
+    """
+    clean = query_str.strip().lower()
+    if not clean:
+        return None
+    if clean.startswith("@"):
+        clean = clean[1:]
+    with_at = f"@{clean}"
+
+    async with aiosqlite.connect(db_path) as db:
+        # 1. Exact match on username in users table
+        async with db.execute(
+            "SELECT user_id, username FROM users WHERE LOWER(username) IN (?, ?)",
+            (with_at, clean)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return row[0], row[1] or with_at
+
+        # 2. Match in mutes table
+        async with db.execute(
+            "SELECT user_id, username FROM mutes WHERE chat_id = ? AND LOWER(username) IN (?, ?)",
+            (chat_id, with_at, clean)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return row[0], row[1] or with_at
+
+        # 3. Partial substring match in users table
+        async with db.execute(
+            "SELECT user_id, username FROM users WHERE LOWER(username) LIKE ?",
+            (f"%{clean}%",)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return row[0], row[1] or with_at
+
+    return None
+
