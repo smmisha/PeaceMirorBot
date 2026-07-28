@@ -164,6 +164,7 @@ def main():
     app.add_handler(CommandHandler("warn", admin.cmd_warn))
     app.add_handler(CommandHandler("addword", admin.cmd_addword))
     app.add_handler(CommandHandler("removeword", admin.cmd_removeword))
+    app.add_handler(CommandHandler("wordlist", admin.cmd_wordlist))
     app.add_handler(CommandHandler("resetstats", admin.cmd_resetstats))
     app.add_handler(CommandHandler("chattag", admin.cmd_chattag))
     app.add_handler(CommandHandler("uncaptcha", admin.cmd_uncaptcha))
