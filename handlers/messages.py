@@ -16,17 +16,23 @@ import telegram_utils
 logger = logging.getLogger("PeaceMirorBot.handlers.messages")
 
 
-# Слова благодарности ищутся по ГРАНИЦАМ СЛОВА. Раньше список проверялся
-# подстрокой и содержал "+", из-за чего любое сообщение с плюсом ("2+2", "C++")
-# или со словом "понял" ("да не понял я") дарило собеседнику +5 репутации.
-THANKS_REGEX = re.compile(
-    r'(?:^|\W)(?:'
-    r'спасибо|спсибо|спасиб|благодарю|благодарность|респект|пасиб|сенкс|'
-    r'красавчик|красава|молодец|молодчина|обнял|обняла|'
-    r'принял|принято|\+1|\+\+|плюсую|/thanks'
-    r')(?:\W|$)',
+# Безусловная благодарность — засчитывается в любом контексте
+THANKS_STRONG_REGEX = re.compile(
+    r'(?:^|\W)(?:спасибо|спсибо|спасиб|спс|пасиб|благодарю|благодарность|'
+    r'респект|сенкс|плюсую|\+1|\+\+|/thanks)(?:\W|$)',
     re.IGNORECASE
 )
+
+# Похвала и короткие отклики — только в коротком утвердительном сообщении.
+# Иначе «Ну ты же принял и лечился так?» читается как благодарность.
+THANKS_WEAK_REGEX = re.compile(
+    r'(?:^|\W)(?:красавчик|красава|молодец|молодчина|обнял|обняла|'
+    r'принял|принято)(?:\W|$)',
+    re.IGNORECASE
+)
+
+MAX_WEAK_THANKS_WORDS = 4
+
 HEART_EMOJIS = ("❤️", "💖", "🤍", "💕", "💜", "💙", "🖤", "💗", "💓", "💞", "💘", "🥰")
 THANKS_POINTS = 5
 
@@ -34,7 +40,16 @@ THANKS_POINTS = 5
 async def _handle_thanks(update: Update, context: ContextTypes.DEFAULT_TYPE, message, user):
     """Начисляет репутацию адресату благодарности (по реплаю или упоминанию)."""
     text = message.text or ""
-    is_thanks = bool(THANKS_REGEX.search(text)) or text.strip() == "+" or any(h in text for h in HEART_EMOJIS)
+    stripped = text.strip()
+    is_short = len(stripped.split()) <= MAX_WEAK_THANKS_WORDS
+    is_question = stripped.endswith("?")
+
+    is_thanks = (
+        bool(THANKS_STRONG_REGEX.search(text))
+        or stripped == "+"
+        or any(h in text for h in HEART_EMOJIS)
+        or (bool(THANKS_WEAK_REGEX.search(text)) and is_short and not is_question)
+    )
     if not is_thanks:
         return
 
@@ -73,7 +88,7 @@ async def _handle_thanks(update: Update, context: ContextTypes.DEFAULT_TYPE, mes
     target_mention = text_utils.user_mention(target_display, target_id)
     try:
         await message.reply_text(
-            f"🕊️ {sender_mention} выразил(а) тепло и респект! {target_mention} получает "
+            f"🕊️ {sender_mention} дарит тепло и респект! {target_mention} получает "
             f"**+{THANKS_POINTS} к Репутации** (Всего репутации: **{new_pts}** {badge} {title}).",
             parse_mode="Markdown"
         )

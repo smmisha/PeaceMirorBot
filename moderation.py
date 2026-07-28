@@ -15,8 +15,10 @@ from config import (
 import database
 import notification
 import text_utils
+import telegram_utils
 
 logger = logging.getLogger("PeaceMirorBot.moderation")
+
 
 # Permissions for Muted User (All sending disabled)
 MUTED_PERMISSIONS = ChatPermissions(
@@ -173,16 +175,22 @@ async def process_violation(
             f"📌 *Это ваше 1-е предупреждение.* Повторные оскорбления приведут к временному муту (режиму чтения)."
         )
         try:
-            await message.reply_text(text, parse_mode="Markdown")
+            await telegram_utils.with_retry(
+                lambda: message.reply_text(text, parse_mode="Markdown"),
+                "предупреждение о нарушении"
+            )
         except TelegramError as e:
             logger.warning(f"Markdown warning failed for user {user_id}: {e}. Sending plain text.")
-            await message.reply_text(text.replace("**", "").replace("*", ""))
+            await telegram_utils.with_retry(
+                lambda: message.reply_text(text.replace("**", "").replace("*", "")),
+                "предупреждение (обычный текст)"
+            )
 
     # --- LADDER STEP 2+: DELETE + MUTE (escalating) ---
     else:
         # Delete the offending message
         try:
-            await message.delete()
+            await telegram_utils.with_retry(lambda: message.delete(), "удаление сообщения")
         except (Forbidden, BadRequest) as e:
             logger.warning(f"Could not delete message for step {new_count}: {e}")
             await notify_admin_missing_rights(context, "удаление сообщения", chat.id, chat_title)
@@ -195,14 +203,21 @@ async def process_violation(
         # Apply mute
         muted = False
         try:
-            await context.bot.restrict_chat_member(
-                chat_id=chat.id,
-                user_id=user_id,
-                permissions=MUTED_PERMISSIONS,
-                until_date=until_date
+            result = await telegram_utils.with_retry(
+                lambda: context.bot.restrict_chat_member(
+                    chat_id=chat.id,
+                    user_id=user_id,
+                    permissions=MUTED_PERMISSIONS,
+                    until_date=until_date
+                ),
+                f"мут пользователя {user_id}"
             )
-            muted = True
-            await database.set_user_mute(DB_PATH, chat_id=chat.id, user_id=user_id, username=username, muted_until=until_date)
+            muted = result is not None
+            if muted:
+                await database.set_user_mute(
+                    DB_PATH, chat_id=chat.id, user_id=user_id,
+                    username=username, muted_until=until_date
+                )
         except (Forbidden, BadRequest) as e:
             logger.error(f"Could not restrict user {user_id}: {e}")
             await notify_admin_missing_rights(context, "ограничение участника (мут)", chat.id, chat_title)
@@ -229,8 +244,14 @@ async def process_violation(
             )
 
         try:
-            await context.bot.send_message(chat_id=chat.id, text=text, parse_mode="Markdown")
+            await telegram_utils.with_retry(
+                lambda: context.bot.send_message(chat_id=chat.id, text=text, parse_mode="Markdown"),
+                "уведомление о муте"
+            )
         except TelegramError as e:
             logger.warning(f"Markdown mute notice failed in chat {chat.id}: {e}. Sending plain text.")
-            await context.bot.send_message(chat_id=chat.id, text=text.replace("**", "").replace("*", ""))
+            await telegram_utils.with_retry(
+                lambda: context.bot.send_message(chat_id=chat.id, text=text.replace("**", "").replace("*", "")),
+                "уведомление о муте (обычный текст)"
+            )
 
