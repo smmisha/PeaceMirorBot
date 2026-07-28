@@ -175,7 +175,7 @@ def main():
     app.add_handler(CallbackQueryHandler(captcha.handle_captcha_callback, pattern=r"^captcha_pass_"))
 
     # Group Messages Handler (text, voice, stickers, photos, and animations)
-    group_filter = ((filters.TEXT | filters.VOICE | filters.STICKER | filters.PHOTO | filters.ANIMATION) & ~filters.COMMAND)
+    group_filter = ((filters.TEXT | filters.VOICE | filters.Sticker.ALL | filters.PHOTO | filters.ANIMATION) & ~filters.COMMAND)
     app.add_handler(MessageHandler(group_filter, messages.handle_group_message))
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE & group_filter, messages.handle_group_message))
 
