@@ -214,11 +214,14 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today_str = datetime.now().strftime("%Y-%m-%d")
 
     chat = update.effective_chat
-    today_history = await database.get_recent_chat_history(DB_PATH, chat.id, limit=150)
+    history = context.bot_data.get(f"chat_history_{chat.id}", [])
+
+    # Filter history strictly for TODAY (since 00:00)
+    today_history = [m for m in history if m.get("date", today_str) == today_str]
 
     if not today_history or len(today_history) < 2:
         await message.reply_text(
-            "📝 **Сообщений пока недостаточно для подведения итогов!**\nПообщайтесь немного в чате, и я составлю краткую сводку дня.",
+            "📝 **За сегодня (с 00:00) сообщений пока недостаточно для подведения итогов!**\nПообщайтесь немного, и я составлю краткую сводку дня.",
             parse_mode="Markdown"
         )
         return
