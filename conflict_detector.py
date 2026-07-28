@@ -75,8 +75,8 @@ SAFE_WORDS: Set[str] = {
     "скотина", "скот", "скотины", "скотинаа",
     # Words containing "дроч"
     "задрочить",  # keep only explicit forms, not "подросток" etc.
-    # Words containing "тварь" — allow as animal term in some contexts
-    "тварина",
+    # Words containing "тварь" — allow benign words like "утварь"
+    "тварина", "утварь", "утвари", "утварью",
     # Names and benign words (юля, буй, буек)
     "юля", "юли", "юле", "юлю", "юлей",
     "буй", "буёк", "буек", "буйный", "буйство", "буйства", "буйствами",
