@@ -57,6 +57,13 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 logger.info(f"Groq Whisper transcribed voice message from user {user.id} ({user.full_name}): '{transcribed}'")
         except Exception as e:
             logger.error(f"Error processing voice message for user {user.id}: {e}")
+    elif message.sticker:
+        emoji_str = f" {message.sticker.emoji}" if message.sticker and message.sticker.emoji else ""
+        text_to_check = f"[Стикер{emoji_str}]"
+    elif (message.photo or message.animation) and message.caption:
+        text_to_check = message.caption
+    elif (message.photo or message.animation) and not text_to_check:
+        text_to_check = "[Картинка/GIF]"
 
     if not text_to_check:
         return
@@ -136,7 +143,7 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     pass
 
     # If no profanity violation, check if user explicitly called/addressed the bot
-    if message.text:
+    if text_to_check:
         bot_username = context.bot_data.get("bot_username")
         if not bot_username:
             try:
@@ -153,14 +160,25 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         is_mentioned = (
             bot_username
-            and f"@{bot_username.lower()}" in message.text.lower()
+            and f"@{bot_username.lower()}" in text_to_check.lower()
         )
+        is_name_called = "мирчик" in text_to_check.lower()
 
-        if is_reply_to_bot or is_mentioned:
+        if is_reply_to_bot or is_mentioned or is_name_called:
             import re
-            prompt = message.text
+            user_text = text_to_check
             if bot_username:
-                prompt = re.sub(rf'@{re.escape(bot_username)}', '', prompt, flags=re.IGNORECASE).strip()
+                user_text = re.sub(rf'@{re.escape(bot_username)}', '', user_text, flags=re.IGNORECASE).strip()
+
+            if message.reply_to_message:
+                replied_text = message.reply_to_message.text or message.reply_to_message.caption or ""
+                replied_author = message.reply_to_message.from_user.full_name if message.reply_to_message.from_user else "Участник"
+                if user_text:
+                    prompt = f"Контекст (сообщение от {replied_author}): «{replied_text}»\nВопрос/ответ пользователя: {user_text}"
+                else:
+                    prompt = f"Прокомментируй сообщение от {replied_author}: «{replied_text}»"
+            else:
+                prompt = user_text
 
             if prompt:
                 logger.info(f"AI response requested by user {user.id} ({user.full_name}): '{prompt}'")
@@ -170,6 +188,10 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     await message.reply_text(ai_reply, parse_mode="Markdown")
                 except Exception as e:
                     logger.error(f"Error sending AI reply to user {user.id}: {e}")
+                    try:
+                        await message.reply_text("😴 Ой, Мирчик сейчас немного занят или отвлёкся на чай! Напиши мне через пару секунд ☕")
+                    except Exception:
+                        pass
         else:
             # Check if organic AI chat response is enabled by admin (/chattag on)
             random_tag_setting = await database.get_setting(DB_PATH, f"random_tag_{chat.id}", "0")

@@ -125,9 +125,17 @@ async def cmd_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not message:
         return
 
-    prompt = " ".join(context.args).strip() if context.args else ""
-    if not prompt and message.reply_to_message:
-        prompt = message.reply_to_message.text or ""
+    user_prompt = " ".join(context.args).strip() if context.args else ""
+
+    if message.reply_to_message:
+        replied_text = message.reply_to_message.text or message.reply_to_message.caption or ""
+        replied_author = message.reply_to_message.from_user.full_name if message.reply_to_message.from_user else "Участник"
+        if user_prompt:
+            prompt = f"Контекст (сообщение от {replied_author}): «{replied_text}»\nВопрос/комментарий участника: {user_prompt}"
+        else:
+            prompt = f"Прокомментируй сообщение от {replied_author}: «{replied_text}»"
+    else:
+        prompt = user_prompt
 
     if not prompt:
         await message.reply_text("💡 **Напишите вопрос к ИИ:**\nПример: `/ai что думаешь по поводу этого спора?`", parse_mode="Markdown")
@@ -140,6 +148,10 @@ async def cmd_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text(ai_reply, parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Error in cmd_ai: {e}")
+        try:
+            await message.reply_text("😴 Ой, Мирчик сейчас немного занят или отвлёкся на чай! Напиши мне через пару секунд ☕")
+        except Exception:
+            pass
 
 
 async def cmd_meme(update: Update, context: ContextTypes.DEFAULT_TYPE):
