@@ -32,4 +32,13 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
+
+# httpx на уровне INFO пишет полный URL запроса, а токен бота стоит прямо в пути:
+# "api.telegram.org/bot<ТОКЕН>/getUpdates". На хостинге логи сервиса обычно доступны
+# шире, чем .env, поэтому глушим до WARNING — ошибки сети по-прежнему видны.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+# APScheduler на каждом тике сыплет служебными строками про джобы
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+
 logger = logging.getLogger("PeaceMirorBot")
