@@ -24,6 +24,9 @@ RESET_INACTIVE_DAYS = int(os.getenv("RESET_INACTIVE_DAYS", "7"))
 # Groq API Key
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 
+# Mistral API Key (Fallback AI provider)
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "").strip()
+
 # Setup Logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",

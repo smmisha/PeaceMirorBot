@@ -224,8 +224,50 @@ async def generate_ai_reply(user_prompt: str, user_name: str = "Участник
             if attempt < 2:
                 await asyncio.sleep(1)
             else:
-                logger.error(f"Error generating AI reply via Groq after retries: {e}")
-                return "😴 Ой, Мирчик сейчас немного занят или отвлёкся на чай! Напиши мне через пару секунд ☕"
+                logger.error(f"Groq API unavailable after retries: {e}. Trying Mistral AI fallback...")
+
+    # Fallback to Mistral AI API if Groq fails or is overloaded
+    mistral_reply = await _call_mistral_fallback(system_prompt, prompt_content)
+    if mistral_reply:
+        return mistral_reply
+
+    return "😴 Ой, Мирчик сейчас немного занят или отвлёкся на чай! Напиши мне через пару секунд ☕"
+
+
+async def _call_mistral_fallback(system_prompt: str, prompt_content: str) -> Optional[str]:
+    """Fallback AI call using Mistral AI API when Groq is unavailable or overloaded."""
+    from config import MISTRAL_API_KEY
+    if not MISTRAL_API_KEY:
+        return None
+
+    try:
+        import httpx
+        url = "https://api.mistral.ai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {MISTRAL_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "mistral-small-latest",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt_content}
+            ],
+            "temperature": 0.85,
+            "max_tokens": 180
+        }
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                reply = data["choices"][0]["message"]["content"].strip()
+                logger.info("Successfully received fallback AI reply from Mistral AI!")
+                return reply
+            else:
+                logger.warning(f"Mistral API returned status {resp.status_code}: {resp.text}")
+    except Exception as e:
+        logger.error(f"Error executing Mistral AI fallback: {e}")
+    return None
 
 
 async def summarize_chat_history(history: list[dict]) -> str:
