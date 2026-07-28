@@ -260,7 +260,7 @@ async def handle_captcha_button(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         await query.answer("✅ Капча успешно пройдена! Добро пожаловать!", show_alert=False)
         user_mention = _safe_mention(clicker_user.full_name, clicker_user.id)
-        text_out = f"🟢 {user_mention} успешно прошел/прошла проверку капчи. Приятного общения!"
+        text_out = f"🟢 {user_mention} успешно прошёл проверку капчи. Приятного общения!"
 
     # Delete the captcha message
     if query.message:
