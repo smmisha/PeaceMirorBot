@@ -3,3 +3,4 @@ aiosqlite>=0.19.0
 python-dotenv>=1.0.0
 groq>=1.6.0
 ddgs>=9.14.0
+httpx>=0.27.0

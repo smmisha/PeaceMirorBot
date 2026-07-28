@@ -14,6 +14,7 @@ from config import (
 )
 import database
 import notification
+import text_utils
 
 logger = logging.getLogger("PeaceMirorBot.moderation")
 
@@ -48,6 +49,21 @@ UNMUTED_PERMISSIONS = ChatPermissions(
     can_add_web_page_previews=True,
     can_invite_users=True
 )
+
+
+async def get_default_permissions(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> ChatPermissions:
+    """
+    Права, которые надо вернуть при размуте. Берём реальные настройки чата, а не
+    константу: UNMUTED_PERMISSIONS не включает закрепление сообщений и изменение
+    профиля чата, и после мута пользователь тихо терял эти права.
+    """
+    try:
+        chat = await context.bot.get_chat(chat_id)
+        if chat.permissions:
+            return chat.permissions
+    except TelegramError as e:
+        logger.warning(f"Could not read default permissions for chat {chat_id}: {e}")
+    return UNMUTED_PERMISSIONS
 
 
 def format_mute_duration(minutes: int) -> str:
@@ -125,11 +141,13 @@ async def process_violation(
     matched_word: str
 ):
     """
-    Processes a conflict/profanity violation based on the mute ladder:
+    Processes a conflict/profanity violation based on the mute ladder
+    (значения берутся из config, ниже — дефолты):
     1: Peace warning in chat
-    2: Delete message + Mute 15 min
-    3: Delete message + Mute 2 hours
-    4+: Delete message + Mute with exponential doubling (24h → 48h → 96h → ...)
+    2: Delete message + Mute 5 min
+    3: Delete message + Mute 15 min
+    4: Delete message + Mute 2 hours
+    5+: Delete message + Mute with exponential doubling (24h → 48h → 96h → ...)
     """
     message: Message = update.effective_message
     if not message or not message.from_user:
@@ -145,7 +163,7 @@ async def process_violation(
     new_count = await database.record_violation(DB_PATH, user_id, username)
     logger.info(f"User {username} (ID: {user_id}) violation #{new_count}. Triggered by: '{matched_word}'")
 
-    user_mention = f"[{user.full_name}](tg://user?id={user_id})"
+    user_mention = text_utils.user_mention(user.full_name, user_id)
 
     # --- LADDER STEP 1: PEACE WARNING ---
     if new_count == 1:
@@ -154,7 +172,11 @@ async def process_violation(
             f"Оскорбления и нецензурная лексика в чате запрещены. Любой конфликт можно разрешить конструктивно.\n\n"
             f"📌 *Это ваше 1-е предупреждение.* Повторные оскорбления приведут к временному муту (режиму чтения)."
         )
-        await message.reply_text(text, parse_mode="Markdown")
+        try:
+            await message.reply_text(text, parse_mode="Markdown")
+        except TelegramError as e:
+            logger.warning(f"Markdown warning failed for user {user_id}: {e}. Sending plain text.")
+            await message.reply_text(text.replace("**", "").replace("*", ""))
 
     # --- LADDER STEP 2+: DELETE + MUTE (escalating) ---
     else:
@@ -206,5 +228,9 @@ async def process_violation(
                 f"📌 *Это ваше {new_count}-е нарушение.* (По ограничениям Telegram бот не может применить режим чтения к администратору, но сообщение удалено)."
             )
 
-        await context.bot.send_message(chat_id=chat.id, text=text, parse_mode="Markdown")
+        try:
+            await context.bot.send_message(chat_id=chat.id, text=text, parse_mode="Markdown")
+        except TelegramError as e:
+            logger.warning(f"Markdown mute notice failed in chat {chat.id}: {e}. Sending plain text.")
+            await context.bot.send_message(chat_id=chat.id, text=text.replace("**", "").replace("*", ""))
 

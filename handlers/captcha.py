@@ -5,8 +5,9 @@ from telegram.ext import ContextTypes
 from telegram.error import TelegramError, Forbidden, BadRequest
 
 from config import DB_PATH
-from moderation import MUTED_PERMISSIONS, UNMUTED_PERMISSIONS
+from moderation import MUTED_PERMISSIONS, get_default_permissions
 import database
+import text_utils
 
 logger = logging.getLogger("PeaceMirorBot.handlers.captcha")
 
@@ -25,15 +26,7 @@ async def _is_chat_admin(context, chat_id: int, user_id: int) -> bool:
 
 def _safe_mention(full_name: str, user_id: int) -> str:
     """Safely formats user mention string escaping Markdown special characters."""
-    escaped_name = (
-        full_name.replace("\\", "\\\\")
-        .replace("[", "\\[")
-        .replace("]", "\\]")
-        .replace("*", "\\*")
-        .replace("_", "\\_")
-        .replace("`", "\\`")
-    )
-    return f"[{escaped_name}](tg://user?id={user_id})"
+    return text_utils.user_mention(full_name, user_id)
 
 
 async def _process_user_captcha(context: ContextTypes.DEFAULT_TYPE, chat, user):
@@ -200,8 +193,14 @@ async def handle_chat_member_updated(update: Update, context: ContextTypes.DEFAU
     old_status = result.old_chat_member.status
     new_status = result.new_chat_member.status
 
+    # Пользователь ДОЛЖЕН оказаться в чате: без этой проверки самостоятельный выход
+    # (from_user == user, new_status = LEFT) тоже считался «входом» — бот слал капчу
+    # ушедшему, пытался его замутить и вешал задачу на кик через 24 часа.
+    if new_status not in (ChatMember.MEMBER, ChatMember.RESTRICTED):
+        return
+
     is_user_self_action = (result.from_user and result.from_user.id == user.id)
-    is_join_transition = old_status in (ChatMember.LEFT, ChatMember.BANNED, ChatMember.RESTRICTED) and new_status in (ChatMember.MEMBER, ChatMember.RESTRICTED)
+    is_join_transition = old_status in (ChatMember.LEFT, ChatMember.BANNED, ChatMember.RESTRICTED)
 
     if is_user_self_action or is_join_transition:
         logger.info(f"User {user.full_name} ({user.id}) joined/re-joined chat {result.chat.id} (from {old_status} to {new_status}). Triggering captcha.")
@@ -214,7 +213,7 @@ async def approve_user_captcha(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
         await context.bot.restrict_chat_member(
             chat_id=chat_id,
             user_id=user_id,
-            permissions=UNMUTED_PERMISSIONS
+            permissions=await get_default_permissions(context, chat_id)
         )
     except Exception as e:
         logger.error(f"Error restoring permissions for user {user_id}: {e}")
@@ -305,14 +304,16 @@ async def job_captcha_timeout_3m(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.warning(f"Could not delete 3m captcha message {captcha_msg_id} in chat {chat_id}: {e}")
 
-    await database.remove_active_captcha(DB_PATH, chat_id, user_id)
+    # Запись НЕ удаляем: она нужна, чтобы кик через 24 часа пережил перезапуск бота
+    await database.mark_captcha_message_deleted(DB_PATH, chat_id, user_id)
     logger.info(f"Stage 1: 3m captcha message deleted for user {user_id} in chat {chat_id}. User remains muted (24h kick timer active).")
 
 
 async def job_cleanup_expired_captchas(context: ContextTypes.DEFAULT_TYPE):
     """
-    Background job running every 60s to clean up captcha messages older than 3 minutes (180s)
-    from SQLite, guaranteeing deletion even after bot restarts.
+    Background job running every 60s: удаляет публичные сообщения капчи старше 3 минут
+    и кикает тех, кто не подтвердился за 24 часа. Работает по SQLite, поэтому
+    переживает перезапуск бота — раньше обе стадии жили только в JobQueue в памяти.
     """
     try:
         expired = await database.get_expired_captchas(DB_PATH, CAPTCHA_TIMEOUT_3M)
@@ -325,19 +326,40 @@ async def job_cleanup_expired_captchas(context: ContextTypes.DEFAULT_TYPE):
                 logger.info(f"Background cleanup deleted expired captcha message {m_id} for user {u_id} in chat {c_id}.")
             except Exception as e:
                 logger.warning(f"Background cleanup: failed to delete captcha message {m_id} in chat {c_id}: {e}")
-            await database.remove_active_captcha(DB_PATH, c_id, u_id)
+            await database.mark_captcha_message_deleted(DB_PATH, c_id, u_id)
     except Exception as e:
         logger.error(f"Error in job_cleanup_expired_captchas: {e}")
+
+    try:
+        for item in await database.get_captchas_to_kick(DB_PATH, CAPTCHA_KICK_24H):
+            c_id = item["chat_id"]
+            u_id = item["user_id"]
+            try:
+                await context.bot.ban_chat_member(chat_id=c_id, user_id=u_id)
+                await context.bot.unban_chat_member(chat_id=c_id, user_id=u_id)
+                logger.info(f"Stage 2 (persistent): kicked unverified user {u_id} from chat {c_id} after 24h.")
+            except Exception as e:
+                logger.warning(f"Persistent 24h kick failed for user {u_id} in chat {c_id}: {e}")
+            await database.remove_active_captcha(DB_PATH, c_id, u_id)
+    except Exception as e:
+        logger.error(f"Error in persistent captcha kick stage: {e}")
 
 
 async def job_captcha_kick_24h(context: ContextTypes.DEFAULT_TYPE):
     """
     Stage 2: Kicks unverified user after 24 hours of failing to pass captcha.
+    Дублируется устойчивой проверкой по SQLite в job_cleanup_expired_captchas —
+    здесь только быстрый путь, если бот всё это время не перезапускался.
     """
     data = context.job.data
     chat_id = data["chat_id"]
     user_id = data["user_id"]
     user_name = data.get("user_name", f"ID: {user_id}")
+
+    still_pending = await database.get_active_captcha(DB_PATH, chat_id, user_id)
+    if not still_pending:
+        logger.info(f"Skipping 24h kick for user {user_id}: captcha already resolved.")
+        return
 
     try:
         await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
@@ -345,6 +367,8 @@ async def job_captcha_kick_24h(context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Stage 2: Kicked unverified user {user_name} ({user_id}) from chat {chat_id} after 24h captcha timeout.")
     except Exception as e:
         logger.warning(f"Failed 24h kick for user {user_id}: {e}")
+
+    await database.remove_active_captcha(DB_PATH, chat_id, user_id)
 
 
 async def job_delete_message(context: ContextTypes.DEFAULT_TYPE):
@@ -377,7 +401,7 @@ async def trigger_captcha_for_user(context: ContextTypes.DEFAULT_TYPE, chat, use
     ])
 
     name_display = user_name or f"ID: {user_id}"
-    user_mention = f"[{name_display}](tg://user?id={user_id})"
+    user_mention = text_utils.user_mention(name_display, user_id)
 
     caption = (
         f"👋 {user_mention}, администратор снял с вас мут!\n\n"

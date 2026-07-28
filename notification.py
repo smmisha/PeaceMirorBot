@@ -49,7 +49,7 @@ async def notify_admins(
         return
 
     # Schedule fallback notification after 5 minutes
-    if event_key and len(active_admins) > 1:
+    if event_key and len(active_admins) > 1 and context.job_queue:
         remaining_admins = [a["user_id"] for a in active_admins[1:]]
         context.job_queue.run_once(
             _fallback_job,

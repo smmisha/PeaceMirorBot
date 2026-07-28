@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 import aiosqlite
 
@@ -66,12 +67,22 @@ async def init_db(db_path: str) -> bool:
     """Initializes the SQLite database tables."""
     try:
         async with aiosqlite.connect(db_path) as db:
+            # WAL: соединение открывается на каждый запрос, а фоновые задачи ходят в БД
+            # параллельно с обработкой сообщений — без него ловим "database is locked"
+            await db.execute("PRAGMA journal_mode=WAL")
             await db.executescript(INIT_SQL)
             # Migration: Add peace_points column to users table if missing
             try:
                 await db.execute("ALTER TABLE users ADD COLUMN peace_points INTEGER DEFAULT 0")
             except Exception:
                 pass  # Column already exists
+            # Migration: флаг «публичное сообщение капчи уже удалено».
+            # Запись о непройденной капче теперь живёт до верификации или кика,
+            # иначе после перезапуска бота юзер оставался в муте навсегда.
+            try:
+                await db.execute("ALTER TABLE captchas ADD COLUMN message_deleted INTEGER DEFAULT 0")
+            except Exception:
+                pass
             await db.commit()
         logger.info("Database schema initialized.")
         return True
@@ -80,11 +91,29 @@ async def init_db(db_path: str) -> bool:
         return False
 
 
+def normalize_username(username: str | None) -> str | None:
+    """
+    Приводит имя к единому виду для хранения: "@ник" для настоящих username и
+    отображаемое имя как есть. Раньше "@" клеился и к «Иван Петров», из-за чего
+    в /top появлялось "@@Иван Петров", а поиск по упоминанию не находил юзера.
+    """
+    if not username:
+        return None
+    name = username.strip()
+    if not name or name.startswith("ID:"):
+        return name or None
+    bare = name.lstrip("@")
+    if not bare:
+        return None
+    # настоящий username: только буквы/цифры/подчёркивания, без пробелов
+    if re.fullmatch(r'[A-Za-z0-9_]{3,32}', bare):
+        return f"@{bare}"
+    return name if not name.startswith("@") else bare
+
+
 async def ensure_user_exists(db_path: str, user_id: int, username: str | None = None) -> None:
     """Inserts or updates user in DB so @username can be resolved by admin commands."""
-    uname = username if username else None
-    if uname and not uname.startswith("@") and not uname.startswith("ID:"):
-        uname = f"@{uname}"
+    uname = normalize_username(username)
     async with aiosqlite.connect(db_path) as db:
         await db.execute(
             """
@@ -99,6 +128,7 @@ async def ensure_user_exists(db_path: str, user_id: int, username: str | None = 
 
 async def record_violation(db_path: str, user_id: int, username: str) -> int:
     """Increments user's violation counter and updates timestamp. Returns new violation count."""
+    username = normalize_username(username)
     now = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(db_path) as db:
         async with db.execute("SELECT violations FROM users WHERE user_id = ?", (user_id,)) as cursor:
@@ -272,7 +302,12 @@ async def get_active_admins(db_path: str, chat_id: int) -> list[dict]:
 
 
 async def get_active_user_mute(db_path: str, chat_id: int, user_id: int) -> dict | None:
-    """Returns active mute record if user currently has an unexpired mute in DB."""
+    """
+    Returns active mute record if user currently has an unexpired mute in THIS chat.
+
+    Запасной запрос к таблице users убран: он не учитывал chat_id, и мут,
+    выданный в одном чате, возобновлялся при входе пользователя в любой другой.
+    """
     now_str = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
@@ -281,18 +316,7 @@ async def get_active_user_mute(db_path: str, chat_id: int, user_id: int) -> dict
             (chat_id, user_id, now_str)
         ) as cursor:
             row = await cursor.fetchone()
-            if row:
-                return dict(row)
-
-        async with db.execute(
-            "SELECT * FROM users WHERE user_id = ? AND is_muted = 1 AND muted_until > ?",
-            (user_id, now_str)
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                return dict(row)
-
-    return None
+            return dict(row) if row else None
 
 
 async def get_setting(db_path: str, key: str, default: str = "") -> str:
@@ -326,6 +350,7 @@ def get_rank_title(points: int) -> tuple[str, str]:
 
 async def add_peace_points(db_path: str, user_id: int, username: str, points: int) -> int:
     """Adds points to user's peace_points counter. Returns updated total points."""
+    username = normalize_username(username)
     async with aiosqlite.connect(db_path) as db:
         await db.execute(
             "INSERT INTO users (user_id, username, peace_points) VALUES (?, ?, ?) "
@@ -350,20 +375,42 @@ async def get_top_peacekeepers(db_path: str, limit: int = 10) -> list[dict]:
             return [dict(r) for r in rows]
 
 
+def local_day_start_utc() -> str:
+    """
+    Начало сегодняшнего дня по ЛОКАЛЬНОМУ времени, выраженное в UTC — в том же
+    формате, в котором SQLite пишет CURRENT_TIMESTAMP ("YYYY-MM-DD HH:MM:SS").
+
+    Раньше здесь стояло datetime('now','start of day','localtime'), которое при
+    UTC+3 даёт 03:00 UTC: сообщения, отправленные с 03:00 до 06:00 по Киеву,
+    не попадали в /summary и безвозвратно удалялись из истории.
+    """
+    now_local = datetime.now().astimezone()
+    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start_local.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _utc_stamp_to_local_time(created_at: str) -> str:
+    """Переводит UTC-метку из БД в локальное HH:MM для вывода в сводке."""
+    try:
+        dt = datetime.strptime(str(created_at)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        return dt.astimezone().strftime("%H:%M")
+    except (ValueError, TypeError):
+        return "00:00"
+
+
 async def cleanup_old_chat_history(db_path: str):
     """Deletes chat_history messages from previous days (keeping only current day's messages). Mutes/bans are unaffected."""
     try:
         async with aiosqlite.connect(db_path) as db:
-            await db.execute("DELETE FROM chat_history WHERE created_at < datetime('now', 'start of day', 'localtime')")
+            await db.execute("DELETE FROM chat_history WHERE created_at < ?", (local_day_start_utc(),))
             await db.commit()
     except Exception as e:
         logger.error(f"Error cleaning up old chat history: {e}")
 
 
 async def save_chat_message(db_path: str, chat_id: int, user_name: str, message_text: str):
-    """Saves a chat message to persistent SQLite storage for /summary, auto-clearing previous days' messages."""
+    """Saves a chat message to persistent SQLite storage for /summary."""
     try:
-        await cleanup_old_chat_history(db_path)
         async with aiosqlite.connect(db_path) as db:
             await db.execute(
                 "INSERT INTO chat_history (chat_id, user_name, message_text) VALUES (?, ?, ?)",
@@ -381,18 +428,17 @@ async def get_recent_chat_history(db_path: str, chat_id: int, limit: int = 150) 
         async with aiosqlite.connect(db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                "SELECT user_name, message_text, created_at FROM chat_history WHERE chat_id = ? AND created_at >= datetime('now', 'start of day', 'localtime') ORDER BY id DESC LIMIT ?",
-                (chat_id, limit)
+                "SELECT user_name, message_text, created_at FROM chat_history "
+                "WHERE chat_id = ? AND created_at >= ? ORDER BY id DESC LIMIT ?",
+                (chat_id, local_day_start_utc(), limit)
             )
             rows = await cursor.fetchall()
             history = []
             for row in reversed(rows):
-                created_str = str(row["created_at"])
-                time_str = created_str.split()[1][:5] if " " in created_str else "00:00"
                 history.append({
                     "name": row["user_name"],
                     "text": row["message_text"],
-                    "time": time_str
+                    "time": _utc_stamp_to_local_time(row["created_at"])
                 })
             return history
     except Exception as e:
@@ -448,6 +494,18 @@ async def save_active_captcha(db_path: str, chat_id: int, user_id: int, message_
         await db.commit()
 
 
+async def get_active_captcha(db_path: str, chat_id: int, user_id: int) -> dict | None:
+    """Возвращает незакрытую капчу пользователя, если она есть."""
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT chat_id, user_id, message_id, created_at FROM captchas WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
 async def remove_active_captcha(db_path: str, chat_id: int, user_id: int):
     """Removes active captcha entry for a user from SQLite."""
     async with aiosqlite.connect(db_path) as db:
@@ -456,12 +514,36 @@ async def remove_active_captcha(db_path: str, chat_id: int, user_id: int):
 
 
 async def get_expired_captchas(db_path: str, timeout_seconds: int = 180) -> list[dict]:
-    """Returns captchas older than timeout_seconds."""
+    """Returns captchas whose public message is older than timeout_seconds and not yet deleted."""
     cutoff_str = (datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)).isoformat()
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT chat_id, user_id, message_id FROM captchas WHERE created_at <= ?",
+            "SELECT chat_id, user_id, message_id FROM captchas "
+            "WHERE created_at <= ? AND COALESCE(message_deleted, 0) = 0",
+            (cutoff_str,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def mark_captcha_message_deleted(db_path: str, chat_id: int, user_id: int) -> None:
+    """Помечает публичное сообщение капчи удалённым, но саму капчу оставляет непройденной."""
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "UPDATE captchas SET message_deleted = 1 WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id)
+        )
+        await db.commit()
+
+
+async def get_captchas_to_kick(db_path: str, timeout_seconds: int = 86400) -> list[dict]:
+    """Возвращает пользователей, не прошедших капчу дольше timeout_seconds (для кика)."""
+    cutoff_str = (datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)).isoformat()
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT chat_id, user_id FROM captchas WHERE created_at <= ?",
             (cutoff_str,)
         ) as cursor:
             rows = await cursor.fetchall()

@@ -5,11 +5,15 @@ from telegram.ext import ContextTypes
 from telegram.error import TelegramError
 
 from config import ADMIN_ID, DB_PATH
-from moderation import MUTED_PERMISSIONS, UNMUTED_PERMISSIONS
+from moderation import MUTED_PERMISSIONS, get_default_permissions
 import database
 import notification
+import text_utils
 
 logger = logging.getLogger("PeaceMirorBot.handlers.admin")
+
+# Минимальный правдоподобный Telegram user_id — всё, что меньше, считаем длительностью
+MIN_TELEGRAM_USER_ID = 10000
 
 
 async def _track_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -44,8 +48,7 @@ async def _resolve_target_user(update: Update, context: ContextTypes.DEFAULT_TYP
             if entity.type == "text_mention" and entity.user:
                 target = entity.user
                 username = f"@{target.username}" if target.username else target.full_name
-                mention = f"[{target.full_name}](tg://user?id={target.id})"
-                return target.id, username, mention
+                return target.id, username, text_utils.user_mention(target.full_name, target.id)
 
     # Priority 2: Reply to user message or reply to bot notification message
     if message.reply_to_message:
@@ -55,8 +58,7 @@ async def _resolve_target_user(update: Update, context: ContextTypes.DEFAULT_TYP
         # Option A: Reply directly to a regular user message
         if u and not u.is_bot:
             username = f"@{u.username}" if u.username else u.full_name
-            mention = f"[{u.full_name}](tg://user?id={u.id})"
-            return u.id, username, mention
+            return u.id, username, text_utils.user_mention(u.full_name, u.id)
 
         # Option B: Reply to a BOT notification message (e.g. "[Удалённое сообщение]" or mute notice)
         if reply_msg.entities or reply_msg.text:
@@ -65,8 +67,7 @@ async def _resolve_target_user(update: Update, context: ContextTypes.DEFAULT_TYP
                     if entity.type == "text_mention" and entity.user:
                         target = entity.user
                         username = f"@{target.username}" if target.username else target.full_name
-                        mention = f"[{target.full_name}](tg://user?id={target.id})"
-                        return target.id, username, mention
+                        return target.id, username, text_utils.user_mention(target.full_name, target.id)
 
             msg_text = reply_msg.text or reply_msg.caption or ""
             match = re.search(r'tg://user\?id=(\d+)', msg_text)
@@ -74,27 +75,43 @@ async def _resolve_target_user(update: Update, context: ContextTypes.DEFAULT_TYP
                 target_id = int(match.group(1))
                 stats = await database.get_user_stats(DB_PATH, target_id)
                 username = stats.get("username") or f"ID: {target_id}"
-                mention = f"[{username}](tg://user?id={target_id})"
-                return target_id, username, mention
+                return target_id, username, text_utils.user_mention(username, target_id)
 
     # Priority 3: Command arguments (@username, nickname, or user_id)
     if context.args:
         chat = update.effective_chat
+        numeric_args: list[int] = []
+        unresolved: str | None = None
+
         for arg in context.args:
             raw = arg.strip()
+            if not raw:
+                continue
+
+            # Числа откладываем: в `/mute 15 @username` первый аргумент — это минуты,
+            # а не Telegram ID. Раньше резолвер возвращал user_id=15 и мут улетал в пустоту.
             if raw.isdigit():
-                user_id = int(raw)
-                stats = await database.get_user_stats(DB_PATH, user_id)
-                username = stats.get("username") or f"ID: {user_id}"
-                mention = f"[{username}](tg://user?id={user_id})"
-                return user_id, username, mention
+                numeric_args.append(int(raw))
+                continue
 
             found = await database.find_user_by_name_or_alias(DB_PATH, chat.id if chat else 0, raw)
             if found:
                 u_id, u_name = found
-                return u_id, u_name, f"[{u_name}](tg://user?id={u_id})"
+                return u_id, u_name, text_utils.user_mention(u_name, u_id)
 
-            return None, raw, f"`{raw}`"
+            if unresolved is None:
+                unresolved = raw
+
+        # Числовым аргументом считаем Telegram ID только если он правдоподобен:
+        # реальные ID — это минимум 5 знаков, а длительность мута задают минутами.
+        for num in numeric_args:
+            if num >= MIN_TELEGRAM_USER_ID:
+                stats = await database.get_user_stats(DB_PATH, num)
+                username = stats.get("username") or f"ID: {num}"
+                return num, username, text_utils.user_mention(username, num)
+
+        if unresolved:
+            return None, unresolved, f"`{text_utils.escape_md(unresolved)}`"
 
     return None, None, None
 
@@ -109,8 +126,11 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     if ADMIN_ID and user.id == ADMIN_ID:
         return True
 
+    # В личке админом считается ТОЛЬКО владелец бота (ADMIN_ID), проверенный выше.
+    # Раньше здесь стоял безусловный `return True`, и любой желающий мог написать
+    # боту в ЛС и выполнить /resetstats all или /addword — списки слов глобальные.
     if chat.type == "private":
-        return True
+        return False
 
     try:
         member = await context.bot.get_chat_member(chat.id, user.id)
@@ -132,7 +152,7 @@ async def cmd_mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_id:
         if username and username.startswith("@"):
             await update.message.reply_text(
-                f"❌ Пользователь `{username}` не найден в базе данных бота.\n"
+                f"❌ Пользователь `{text_utils.escape_md(username)}` не найден в базе данных бота.\n"
                 f"Выдайте мут ответом на его сообщение или укажите его Telegram ID.",
                 parse_mode="Markdown"
             )
@@ -155,6 +175,16 @@ async def cmd_mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 reason_parts.append(arg)
 
+    # Telegram трактует срок меньше 30 секунд как «навсегда», поэтому /mute 0
+    # выдавал вечный мут вместо ошибки. Ограничиваем сверху годом.
+    if minutes < 1 or minutes > 525600:
+        await update.effective_message.reply_text(
+            "⚠️ Длительность мута указывается в минутах, от `1` до `525600` (год).\n"
+            "Пример: `/mute 15 @username Причина`",
+            parse_mode="Markdown"
+        )
+        return
+
     reason = " ".join(reason_parts) if reason_parts else "Нарушение правил общения"
     until_date = datetime.now(timezone.utc) + timedelta(minutes=minutes)
     chat = update.effective_chat
@@ -171,7 +201,7 @@ async def cmd_mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from moderation import format_mute_duration
         await update.effective_message.reply_text(
             f"🤐 {mention} переведён администратором в режим чтения на **{format_mute_duration(minutes)}**.\n"
-            f"📌 *Причина:* {reason}",
+            f"📌 *Причина:* {text_utils.escape_md(reason)}",
             parse_mode="Markdown"
         )
     except Exception as e:
@@ -191,7 +221,7 @@ async def cmd_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_id:
         if username and username.startswith("@"):
             await update.message.reply_text(
-                f"❌ Пользователь `{username}` не найден в базе данных бота.\n"
+                f"❌ Пользователь `{text_utils.escape_md(username)}` не найден в базе данных бота.\n"
                 f"Снимите мут ответом на его сообщение или укажите его Telegram ID.",
                 parse_mode="Markdown"
             )
@@ -234,7 +264,7 @@ async def cmd_warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_id:
         if username and username.startswith("@"):
             await update.message.reply_text(
-                f"❌ Пользователь `{username}` не найден в базе данных бота.",
+                f"❌ Пользователь `{text_utils.escape_md(username)}` не найден в базе данных бота.",
                 parse_mode="Markdown"
             )
         else:
@@ -252,7 +282,7 @@ async def cmd_warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.effective_message.reply_text(
         f"⚠️ {mention} получил предупреждение от администратора!\n"
-        f"📌 *Причина:* {reason}\n"
+        f"📌 *Причина:* {text_utils.escape_md(reason)}\n"
         f"📊 *Всего предупреждений:* `{new_count}`",
         parse_mode="Markdown"
     )
@@ -273,9 +303,9 @@ async def cmd_addword(update: Update, context: ContextTypes.DEFAULT_TYPE):
     word = " ".join(context.args).strip().lower()
     success = await database.add_bad_word(DB_PATH, word)
     if success:
-        await update.message.reply_text(f"✅ Слово `{word}` успешно добавлено в стоп-лист.", parse_mode="Markdown")
+        await update.message.reply_text(f"✅ Слово `{text_utils.escape_md(word)}` успешно добавлено в стоп-лист.", parse_mode="Markdown")
     else:
-        await update.message.reply_text(f"⚠️ Слово `{word}` уже есть в стоп-листе.", parse_mode="Markdown")
+        await update.message.reply_text(f"⚠️ Слово `{text_utils.escape_md(word)}` уже есть в стоп-листе.", parse_mode="Markdown")
 
 
 async def cmd_removeword(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -293,9 +323,9 @@ async def cmd_removeword(update: Update, context: ContextTypes.DEFAULT_TYPE):
     word = " ".join(context.args).strip().lower()
     success = await database.remove_bad_word(DB_PATH, word)
     if success:
-        await update.message.reply_text(f"✅ Слово `{word}` удалено из стоп-листа.", parse_mode="Markdown")
+        await update.message.reply_text(f"✅ Слово `{text_utils.escape_md(word)}` удалено из стоп-листа.", parse_mode="Markdown")
     else:
-        await update.message.reply_text(f"⚠️ Слово `{word}` не найдено в стоп-листе.", parse_mode="Markdown")
+        await update.message.reply_text(f"⚠️ Слово `{text_utils.escape_md(word)}` не найдено в стоп-листе.", parse_mode="Markdown")
 
 
 async def cmd_wordlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -333,7 +363,7 @@ async def cmd_addsafeword(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from conflict_detector import is_hard_profanity
     if is_hard_profanity(word):
         await update.message.reply_text(
-            f"❌ **Слово `{word}` является матом или его разновидностью!**\n"
+            f"❌ **Слово `{text_utils.escape_md(word)}` является матом или его разновидностью!**\n"
             f"Матерные слова (включая `пиздец`, `пздц`, `п3дц`, `хуй`, `ебать` и т.д.) категорически запрещено добавлять в разрешённые.",
             parse_mode="Markdown"
         )
@@ -341,9 +371,9 @@ async def cmd_addsafeword(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     success = await database.add_allowed_word(DB_PATH, word)
     if success:
-        await update.message.reply_text(f"✅ Слово `{word}` успешно добавлено в список разрешённых слов.", parse_mode="Markdown")
+        await update.message.reply_text(f"✅ Слово `{text_utils.escape_md(word)}` успешно добавлено в список разрешённых слов.", parse_mode="Markdown")
     else:
-        await update.message.reply_text(f"⚠️ Слово `{word}` уже есть в списке разрешённых.", parse_mode="Markdown")
+        await update.message.reply_text(f"⚠️ Слово `{text_utils.escape_md(word)}` уже есть в списке разрешённых.", parse_mode="Markdown")
 
 
 async def cmd_removesafeword(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -361,9 +391,9 @@ async def cmd_removesafeword(update: Update, context: ContextTypes.DEFAULT_TYPE)
     word = " ".join(context.args).strip().lower()
     success = await database.remove_allowed_word(DB_PATH, word)
     if success:
-        await update.message.reply_text(f"✅ Слово `{word}` удалено из списка разрешённых слов.", parse_mode="Markdown")
+        await update.message.reply_text(f"✅ Слово `{text_utils.escape_md(word)}` удалено из списка разрешённых слов.", parse_mode="Markdown")
     else:
-        await update.message.reply_text(f"⚠️ Слово `{word}` не найдено в списке разрешённых.", parse_mode="Markdown")
+        await update.message.reply_text(f"⚠️ Слово `{text_utils.escape_md(word)}` не найдено в списке разрешённых.", parse_mode="Markdown")
 
 
 async def cmd_safewordlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -401,7 +431,7 @@ async def cmd_resetstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_id:
         if username and username.startswith("@"):
             await update.message.reply_text(
-                f"❌ Пользователь `{username}` не найден в базе данных бота.",
+                f"❌ Пользователь `{text_utils.escape_md(username)}` не найден в базе данных бота.",
                 parse_mode="Markdown"
             )
         else:
@@ -417,7 +447,7 @@ async def cmd_resetstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.restrict_chat_member(
             chat_id=update.effective_chat.id,
             user_id=user_id,
-            permissions=UNMUTED_PERMISSIONS
+            permissions=await get_default_permissions(context, update.effective_chat.id)
         )
     except Exception:
         pass
@@ -439,7 +469,7 @@ async def cmd_uncaptcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_id:
         if username and username.startswith("@"):
             await update.message.reply_text(
-                f"❌ Пользователь `{username}` ещё не зафиксирован в базе бота (ему нужно отправить хотя бы одно сообщение или перезайти).\n"
+                f"❌ Пользователь `{text_utils.escape_md(username)}` ещё не зафиксирован в базе бота (ему нужно отправить хотя бы одно сообщение или перезайти).\n"
                 f"Снимите капчу ответом на его сообщение в чате или укажите его Telegram ID.",
                 parse_mode="Markdown"
             )

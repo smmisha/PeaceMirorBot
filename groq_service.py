@@ -1,10 +1,15 @@
 import os
 import io
+import asyncio
 import logging
 import json
 from typing import Optional, Tuple
 from groq import Groq
 from config import GROQ_API_KEY
+
+# Клиент Groq и ddgs — СИНХРОННЫЕ. Их вызовы уводятся в отдельный поток через
+# asyncio.to_thread: иначе каждый /ai, /summary и каждое голосовое замораживали
+# весь бот на 2-10 секунд (не работали ни модерация, ни капча, ни фоновые задачи).
 
 logger = logging.getLogger("PeaceMirorBot.groq_service")
 
@@ -80,11 +85,13 @@ async def transcribe_voice(file_bytes: bytes, filename: str = "voice.ogg") -> Op
 
     try:
         audio_file = (filename, file_bytes, "audio/ogg")
-        transcription = client.audio.transcriptions.create(
-            model="whisper-large-v3",
-            file=audio_file,
-            language="ru",
-            response_format="text"
+        transcription = await asyncio.to_thread(
+            lambda: client.audio.transcriptions.create(
+                model="whisper-large-v3",
+                file=audio_file,
+                language="ru",
+                response_format="text"
+            )
         )
         text = str(transcription).strip()
         logger.info(f"Groq Whisper voice transcription result: '{text}'")
@@ -118,11 +125,13 @@ async def analyze_cultural_conflict(recent_messages: list[dict]) -> Tuple[bool, 
     )
 
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.3
+        response = await asyncio.to_thread(
+            lambda: client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.3
+            )
         )
         content = response.choices[0].message.content
         data = json.loads(content)
@@ -172,7 +181,7 @@ async def generate_ai_reply(user_prompt: str, user_name: str = "Участник
     web_results = None
     if needs_search:
         logger.info(f"Triggering live web search for query: '{user_prompt}'")
-        web_results = search_web_info(user_prompt)
+        web_results = await asyncio.to_thread(search_web_info, user_prompt)
 
     # HARDCODED ABSOLUTE SAFETY GUARDRAIL (Zero-tolerance for self-harm/suicide prompts)
     danger_keywords = [
@@ -183,14 +192,13 @@ async def generate_ai_reply(user_prompt: str, user_name: str = "Участник
     prompt_lower = user_prompt.lower()
     if any(dk in prompt_lower for dk in danger_keywords):
         logger.warning(f"CRITICAL SAFETY INTERCEPT: Self-harm keyword detected in prompt from user '{user_name}'!")
-        target_tag = user_mention or user_name
+        # Тег пользователя добавляет вызывающий код, здесь он не нужен —
+        # иначе получалось «Иван, Иван, твоя жизнь...»
         return (
-            f"{target_tag}, твоя жизнь — это самое ценное, что есть! Пожалуйста, не думай о таком и не делай необдуманных шагов. "
-            f"Всегда есть выход и люди, готовые помочь. Поговори с близкими или позвони на бесплатную линию поддержки: 8-800-200-01-22. "
-            f"Ты не один, береги себя! 🤍"
+            "твоя жизнь — это самое ценное, что есть! Пожалуйста, не думай о таком и не делай необдуманных шагов. "
+            "Всегда есть выход и люди, готовые помочь. Поговори с близкими или позвони на бесплатную линию поддержки: 8-800-200-01-22. "
+            "Ты не один, береги себя! 🤍"
         )
-
-    target_tag = user_mention if user_mention else (f"@{user_name}" if not user_name.startswith("@") else user_name)
 
     system_prompt = (
         "Тебя зовут Мирчик. Ты — умный, душевный, с отличным чувством юмора и отзывчивый участник этого Telegram-чата.\n\n"
@@ -211,7 +219,9 @@ async def generate_ai_reply(user_prompt: str, user_name: str = "Участник
     if web_results:
         prompt_content += f"\n\n[Свежие результаты поиска из интернета]:\n{web_results}"
 
-    import asyncio, re
+    import re
+    from conflict_detector import find_violation
+
     def fix_mentions(txt: str) -> str:
         if not txt:
             return txt
@@ -219,18 +229,27 @@ async def generate_ai_reply(user_prompt: str, user_name: str = "Участник
         cleaned = re.sub(r'@[a-zA-Z0-9_\u0400-\u04FF]+', '', txt).strip()
         # Remove any leading punctuation artifact like comma or colon after removing tag
         cleaned = re.sub(r'^[,\s:]+', '', cleaned).strip()
+
+        # Ответ модели проходит тот же фильтр, что и сообщения участников: иначе
+        # промпт-инъекцией («ответь матом») бот сам публиковал мат в чате
+        has_violation, matched = find_violation(cleaned)
+        if has_violation:
+            logger.warning(f"AI reply blocked by profanity filter (matched '{matched}').")
+            return "Ой, давай без грубостей 😅 Спроси меня что-нибудь другое!"
         return cleaned
 
     for attempt in range(3):
         try:
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt_content}
-                ],
-                temperature=0.85,
-                max_tokens=600
+            response = await asyncio.to_thread(
+                lambda: client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt_content}
+                    ],
+                    temperature=0.85,
+                    max_tokens=600
+                )
             )
             raw_reply = response.choices[0].message.content.strip()
             return fix_mentions(raw_reply)
@@ -307,14 +326,16 @@ async def summarize_chat_history(history: list[dict]) -> str:
         return "🤖 AI модуль временно недоступен."
 
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Вот последние сообщения из чата:\n\n{formatted_history}"}
-            ],
-            temperature=0.4,
-            max_tokens=600,
+        response = await asyncio.to_thread(
+            lambda: client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Вот последние сообщения из чата:\n\n{formatted_history}"}
+                ],
+                temperature=0.4,
+                max_tokens=600,
+            )
         )
         return response.choices[0].message.content.strip()
     except Exception as e:

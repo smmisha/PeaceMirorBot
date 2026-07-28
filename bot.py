@@ -128,6 +128,11 @@ async def post_init(application):
         logger.warning("JobQueue is not enabled! Make sure python-telegram-bot[job-queue] is installed.")
 
 
+async def on_error(update, context):
+    """Global error handler: без него исключения в хендлерах терялись в логах PTB."""
+    logger.error(f"Unhandled exception while processing update: {context.error}", exc_info=context.error)
+
+
 def main():
     """Main entry point for starting the PeaceMirorBot Telegram bot."""
     if not BOT_TOKEN:
@@ -188,10 +193,19 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha.handle_new_chat_members))
     app.add_handler(CallbackQueryHandler(captcha.handle_captcha_button, pattern=r"^captcha_pass_"))
 
-    # Group Messages Handler (text, voice, stickers, photos, and animations)
-    group_filter = ((filters.TEXT | filters.VOICE | filters.Sticker.ALL | filters.PHOTO | filters.ANIMATION) & ~filters.COMMAND)
+    # Group Messages Handler (text, voice, stickers, photos, and animations).
+    # filters.ChatType.GROUPS обязателен: без него модерация запускалась и в ЛС, где
+    # бот не может ни удалить сообщение, ни ограничить пользователя — и каждая
+    # неудача рассылала админам «Ошибка прав бота».
+    # Отдельный обработчик для EDITED_MESSAGE не нужен: MessageHandler ловит правки сам.
+    group_filter = (
+        (filters.TEXT | filters.VOICE | filters.Sticker.ALL | filters.PHOTO | filters.ANIMATION)
+        & ~filters.COMMAND
+        & filters.ChatType.GROUPS
+    )
     app.add_handler(MessageHandler(group_filter, messages.handle_group_message))
-    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE & group_filter, messages.handle_group_message))
+
+    app.add_error_handler(on_error)
 
     logger.info("Bot handlers registered. Starting long polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)

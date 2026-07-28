@@ -1,5 +1,7 @@
 import logging
-from telegram import Update, ChatMember
+import re
+import time
+from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import TelegramError
 
@@ -8,23 +10,81 @@ import database
 from conflict_detector import find_violation
 import moderation
 import groq_service
+import text_utils
 
 logger = logging.getLogger("PeaceMirorBot.handlers.messages")
 
 
-async def _is_chat_admin(context, chat_id: int, user_id: int) -> bool:
-    """Checks if a user is an admin/owner in the chat. Returns False on errors."""
+# Слова благодарности ищутся по ГРАНИЦАМ СЛОВА. Раньше список проверялся
+# подстрокой и содержал "+", из-за чего любое сообщение с плюсом ("2+2", "C++")
+# или со словом "понял" ("да не понял я") дарило собеседнику +5 репутации.
+THANKS_REGEX = re.compile(
+    r'(?:^|\W)(?:'
+    r'спасибо|спсибо|спасиб|благодарю|благодарность|респект|пасиб|сенкс|'
+    r'красавчик|красава|молодец|молодчина|обнял|обняла|'
+    r'принял|принято|\+1|\+\+|плюсую|/thanks'
+    r')(?:\W|$)',
+    re.IGNORECASE
+)
+HEART_EMOJIS = ("❤️", "💖", "🤍", "💕", "💜", "💙", "🖤", "💗", "💓", "💞", "💘", "🥰")
+THANKS_POINTS = 5
+
+
+async def _handle_thanks(update: Update, context: ContextTypes.DEFAULT_TYPE, message, user):
+    """Начисляет репутацию адресату благодарности (по реплаю или упоминанию)."""
+    text = message.text or ""
+    is_thanks = bool(THANKS_REGEX.search(text)) or text.strip() == "+" or any(h in text for h in HEART_EMOJIS)
+    if not is_thanks:
+        return
+
+    target_id = None
+    target_username = None
+    target_display = None
+
+    if message.reply_to_message and message.reply_to_message.from_user:
+        target = message.reply_to_message.from_user
+        if target.is_bot:
+            return
+        target_id, target_username, target_display = target.id, target.username, target.full_name
+    elif message.entities:
+        for entity in message.entities:
+            if entity.type == "text_mention" and entity.user:
+                target_id = entity.user.id
+                target_username = entity.user.username
+                target_display = entity.user.full_name
+                break
+            if entity.type == "mention":
+                uname = text[entity.offset:entity.offset + entity.length].strip()
+                # Поиск учитывает оба формата хранения ника: раньше запрос шёл без
+                # "@", а в БД ник лежит с "@", и карма по упоминанию не работала
+                found = await database.find_user_by_name_or_alias(DB_PATH, update.effective_chat.id, uname)
+                if found:
+                    target_id, target_username = found[0], found[1]
+                    target_display = found[1]
+                    break
+
+    if not target_id or target_id == user.id or target_id == context.bot.id:
+        return
+
+    new_pts = await database.add_peace_points(DB_PATH, target_id, target_username, THANKS_POINTS)
+    badge, title = database.get_rank_title(new_pts)
+    sender_mention = text_utils.user_mention(user.full_name, user.id)
+    target_mention = text_utils.user_mention(target_display, target_id)
     try:
-        member = await context.bot.get_chat_member(chat_id, user_id)
-        return member.status in (ChatMember.ADMINISTRATOR, ChatMember.OWNER)
-    except TelegramError:
-        return False
+        await message.reply_text(
+            f"🕊️ {sender_mention} выразил(а) тепло и респект! {target_mention} получает "
+            f"**+{THANKS_POINTS} к Репутации** (Всего репутации: **{new_pts}** {badge} {title}).",
+            parse_mode="Markdown"
+        )
+    except TelegramError as e:
+        logger.warning(f"Failed to send thanks message in chat {update.effective_chat.id}: {e}")
 
 
 async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Evaluates incoming group chat text messages and voice messages (ГС) for profanity or insults.
-    Chat admins are exempt from automatic moderation.
+    Модерация применяется ко всем участникам, включая админов: сообщение админа
+    тоже удаляется, но мут Telegram к администратору применить не даёт.
     """
     message = update.effective_message
     if not message:
@@ -37,11 +97,14 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     user = message.from_user
     chat = update.effective_chat
 
-    if user:
-        u_str = f"@{user.username}" if user.username else user.full_name
-        await database.ensure_user_exists(DB_PATH, user.id, u_str)
+    # У сообщений от имени канала from_user отсутствует — дальше код обращается
+    # к user.full_name / user.id, и обработчик падал с AttributeError
+    if not user or not chat:
+        return
 
-    import time
+    u_str = f"@{user.username}" if user.username else user.full_name
+    await database.ensure_user_exists(DB_PATH, user.id, u_str)
+
     # Track last activity timestamp for 7-hour inactivity check (eyes emoji 👀)
     context.bot_data[f"last_msg_time_{chat.id}"] = time.time()
     context.bot_data[f"eyes_sent_{chat.id}"] = False
@@ -91,51 +154,8 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     # User wrote a clean message — add +1 peace point
     await database.add_peace_points(DB_PATH, user.id, user.username, 1)
 
-    # Check for thank-you / warmth / karma transfer (via reply OR mention)
-    thanks_triggers = [
-        "спасибо", "спсибо", "благодарю", "респект", "+1", "+", "плюс",
-        "красавчик", "молодец", "понял", "поняла", "обнял", "обняла",
-        "принял", "принято", "/thanks"
-    ]
-    heart_emojis = ["❤️", "💖", "🤍", "💕", "💜", "💙", "🖤", "💗", "💓", "💞", "💘", "🥰"]
-
     if message.text:
-        text_lower = message.text.strip().lower()
-        has_heart = any(h in message.text for h in heart_emojis)
-        is_thanks = any(kw in text_lower for kw in thanks_triggers) or has_heart
-
-        if is_thanks:
-            target_user = None
-            if message.reply_to_message and message.reply_to_message.from_user:
-                target_user = message.reply_to_message.from_user
-            elif message.entities:
-                for entity in message.entities:
-                    if entity.type == "mention":
-                        uname = message.text[entity.offset:entity.offset + entity.length].replace("@", "").strip()
-                        if uname:
-                            import aiosqlite
-                            async with aiosqlite.connect(DB_PATH) as db:
-                                db.row_factory = aiosqlite.Row
-                                async with db.execute("SELECT user_id, username FROM users WHERE LOWER(username) = ?", (uname.lower(),)) as cursor:
-                                    row = await cursor.fetchone()
-                                    if row:
-                                        target_user = type("UserObj", (), {"id": row["user_id"], "username": row["username"], "full_name": f"@{row['username']}", "is_bot": False})
-                    elif entity.type == "text_mention" and entity.user:
-                        target_user = entity.user
-
-            if target_user and not getattr(target_user, "is_bot", False) and target_user.id != user.id:
-                pts_to_add = 5
-                new_pts = await database.add_peace_points(DB_PATH, target_user.id, getattr(target_user, "username", None), pts_to_add)
-                badge, title = database.get_rank_title(new_pts)
-                sender_mention = f"[{user.full_name}](tg://user?id={user.id})"
-                target_name = getattr(target_user, "full_name", f"ID {target_user.id}")
-                try:
-                    await message.reply_text(
-                        f"🕊️ {sender_mention} выразил(а) тепло и респект! {target_name} получает **+{pts_to_add} к Репутации** (Всего репутации: **{new_pts}** {badge} {title}).",
-                        parse_mode="Markdown"
-                    )
-                except Exception:
-                    pass
+        await _handle_thanks(update, context, message, user)
 
     # If no profanity violation, check if user explicitly called/addressed the bot
     if text_to_check:
@@ -160,7 +180,6 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
         is_name_called = "мирчик" in text_to_check.lower()
 
         if is_reply_to_bot or is_mentioned or is_name_called:
-            import re
             user_text = text_to_check
             if bot_username:
                 user_text = re.sub(rf'@{re.escape(bot_username)}', '', user_text, flags=re.IGNORECASE).strip()
@@ -190,7 +209,7 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 logger.info(f"AI response requested by user {user.id} ({user.full_name}): '{prompt}'")
                 try:
                     await context.bot.send_chat_action(chat_id=chat.id, action="typing")
-                    u_tag = f"@{user.username}" if user.username else f"[{user.full_name}](tg://user?id={user.id})"
+                    u_tag = f"@{user.username}" if user.username else text_utils.user_mention(user.full_name, user.id)
                     ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name)
                     full_reply = f"{u_tag}, {ai_reply}"
                     try:

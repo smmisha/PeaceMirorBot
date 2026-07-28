@@ -3,7 +3,7 @@ from telegram.ext import ContextTypes
 from telegram.error import TelegramError, Forbidden, BadRequest
 
 from config import DB_PATH, RESET_INACTIVE_DAYS
-from moderation import UNMUTED_PERMISSIONS
+from moderation import get_default_permissions
 import database
 
 logger = logging.getLogger("PeaceMirorBot.background")
@@ -27,7 +27,7 @@ async def job_check_expired_mutes(context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.restrict_chat_member(
                     chat_id=chat_id,
                     user_id=user_id,
-                    permissions=UNMUTED_PERMISSIONS
+                    permissions=await get_default_permissions(context, chat_id)
                 )
                 logger.info(f"Unmuted user {username} ({user_id}) in chat {chat_id}.")
             except (Forbidden, BadRequest) as e:
@@ -50,3 +50,10 @@ async def job_reset_inactive_violations(context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"Reset violations for {reset_count} users inactive for >= {RESET_INACTIVE_DAYS} days.")
     except Exception as e:
         logger.error(f"Error in job_reset_inactive_violations: {e}", exc_info=True)
+
+    # Чистка вчерашней истории чата вынесена сюда: раньше DELETE + commit выполнялись
+    # на КАЖДОЕ входящее сообщение.
+    try:
+        await database.cleanup_old_chat_history(DB_PATH)
+    except Exception as e:
+        logger.error(f"Error cleaning up chat history: {e}", exc_info=True)

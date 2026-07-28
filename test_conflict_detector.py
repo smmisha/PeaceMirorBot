@@ -47,6 +47,49 @@ class TestConflictDetector(unittest.TestCase):
         has_violation, _ = find_violation("Нормальный текст без нарушений", custom_bad_words=custom)
         self.assertFalse(has_violation)
 
+    def test_no_false_positives_on_normal_words(self):
+        """Регрессия: корни мата не должны ловиться в середине обычных слов."""
+        clean_words = [
+            # "ебн"/"ебу"/"еба"/"еби" внутри слова
+            "волшебно", "волшебный", "волшебная", "волшебник", "волшебница",
+            "хлеба", "купи хлеба", "хлебушек", "чебуреки", "чебурашка",
+            "требую", "требуют", "требуется", "потребность", "потребности",
+            "колебания", "колебаться", "жребий", "тебе", "себе", "беби",
+            # "хер" внутри слова и в топонимах
+            "парикмахер", "парикмахерская", "Херсон", "Херсонская область",
+            "херувим", "Хербалайф", "Хертфорд", "херес",
+            # "хул"/"ху" в обычных словах
+            "хулиган", "хулиганить", "худой", "хутор", "хурма", "похудеть",
+            "похуже", "Хуан Карлос", "река Хуанхэ",
+            # приставка + обычный корень
+            "победа", "поеду", "убежал", "наем", "подебатим", "Гондурас",
+            # чисто латинские слова не должны прогоняться через CHAR_MAP
+            "eBay", "я на ebay купил", "xerox", "hue", "debate",
+            # прочее
+            "сукно", "сучковатый", "рисунок", "посуда", "утварь", "гребля", "2+2=4",
+        ]
+        for text in clean_words:
+            has_violation, matched = find_violation(text)
+            self.assertFalse(has_violation, f"Ложное срабатывание на '{text}' (матч: {matched})")
+
+    def test_prefixed_profanity_still_detected(self):
+        """Мат с приставками и обходами должен ловиться."""
+        dirty = [
+            "заебал", "наебал", "уебан", "выебываться", "съебался", "разъебал",
+            "доебался", "приебался", "ебло", "ебнутый", "ёбаный", "долбоёб",
+            "похуй", "нахуя", "охуеть", "нихуя", "херня", "нахер",
+            "х.у.й", "х у й", "хххуууййй", "cuka", "cyka", "pizdec", "nahuy", "zaebal",
+        ]
+        for text in dirty:
+            has_violation, _ = find_violation(text)
+            self.assertTrue(has_violation, f"Пропущен мат: '{text}'")
+
+    def test_safe_words_are_not_silently_disabled(self):
+        """Белый список должен реально работать — раньше 30 из 186 записей были мертвы."""
+        from conflict_detector import SAFE_WORDS, _is_safe_word
+        dead = [w for w in SAFE_WORDS if not _is_safe_word(w)]
+        self.assertEqual(dead, [], f"Записи белого списка не работают: {dead[:10]}")
+
     def test_custom_allowed_words(self):
         # Non-profanity words CAN be whitelisted
         allowed = ["тварь"]

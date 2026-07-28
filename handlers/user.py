@@ -2,9 +2,18 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from config import DB_PATH, ADMIN_ID
+from config import (
+    DB_PATH,
+    ADMIN_ID,
+    MUTE_STEP_2_MINUTES,
+    MUTE_STEP_3_MINUTES,
+    MUTE_STEP_4_MINUTES,
+    MUTE_STEP_5_MINUTES,
+)
+from moderation import format_mute_duration
 import database
 import notification
+import text_utils
 
 logger = logging.getLogger("PeaceMirorBot.handlers.user")
 
@@ -31,17 +40,22 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "📖 **Справка по командам PeaceMirorBot**\n\n"
         "**Для участников:**\n"
-        "• `/mystats` — посмотреть свою статистику предупреждений\n"
+        "• `/mystats` — своя статистика, репутация и звание\n"
+        "• `/top` — рейтинг Топ-10 миротворцев чата\n"
         "• `/rules` — правила мирного общения в чате\n"
-        "• `/report` — (в ответ на сообщение) пожаловаться админам на ссору или оскорбление\n\n"
+        "• `/report` — (ответом на сообщение) позвать админов на конфликт\n"
+        "• `/ai <вопрос>` — задать вопрос Мирчику (можно просто ответить на его сообщение)\n"
+        "• `/summary` — краткая сводка сегодняшнего общения\n"
+        "• `/meme` — случайный мем\n\n"
         "**Для администраторов:**\n"
-        "• `/mute <минуты> <причина>` — дать мут участнику (ответом на сообщение)\n"
-        "• `/unmute` — снять мут с участника (ответом на сообщение)\n"
-        "• `/warn <причина>` — выдача предупреждения (ответом на сообщение)\n"
-        "• `/addword <слово>` — добавить слово в стоп-лист\n"
-        "• `/removeword <слово>` — удалить слово из стоп-листа\n"
-        "• `/wordlist` — показать список запрещённых слов\n"
-        "• `/resetstats` — сбросить статистику нарушений пользователя"
+        "• `/mute <минуты> <@ник|ID> <причина>` — мут участнику (или ответом на сообщение)\n"
+        "• `/unmute <@ник|ID>` — снять мут (участник затем проходит капчу)\n"
+        "• `/warn <@ник|ID> <причина>` — выдать предупреждение\n"
+        "• `/addword`, `/removeword`, `/wordlist` — кастомный стоп-лист\n"
+        "• `/addsafeword`, `/removesafeword`, `/safewordlist` — список разрешённых слов\n"
+        "• `/resetstats <@ник|ID|all>` — сбросить статистику нарушений\n"
+        "• `/uncaptcha <@ник|ID>` — снять капчу с участника\n\n"
+        "🛡️ Новые участники проходят капчу: 3 минуты на кнопку, иначе через 24 часа кик."
     )
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -54,12 +68,14 @@ async def cmd_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2️⃣ **Урегулирование конфликтов**: Разногласия решаются аргументированно и спокойным тоном. В случае разгорающейся ссоры сделайте паузу.\n"
         "3️⃣ **Защита от токсичности**: Использование нецензурной лексики с целью задеть собеседника приводит к автоматическому муту.\n"
         "4️⃣ **Система эскалации**:\n"
-        "   - 1-е нарушение: Миротворческое предупреждение\n"
-        "   - 2-е нарушение: Мут на 5 минут\n"
-        "   - 3-е нарушение: Мут на 15 минут\n"
-        "   - 4-е нарушение: Мут на 2 часа\n"
-        "   - 5-е нарушение: Мут на 24 часа\n"
-        "   - 6-е+: Мут удваивается каждый раз (48ч → 96ч → 192ч → ...)"
+        f"   - 1-е нарушение: Миротворческое предупреждение\n"
+        f"   - 2-е нарушение: Мут на {format_mute_duration(MUTE_STEP_2_MINUTES)}\n"
+        f"   - 3-е нарушение: Мут на {format_mute_duration(MUTE_STEP_3_MINUTES)}\n"
+        f"   - 4-е нарушение: Мут на {format_mute_duration(MUTE_STEP_4_MINUTES)}\n"
+        f"   - 5-е нарушение: Мут на {format_mute_duration(MUTE_STEP_5_MINUTES)}\n"
+        "   - 6-е+: Мут удваивается каждый раз\n\n"
+        "5️⃣ **Репутация**: за спокойное общение и благодарности участники получают "
+        "баллы миротворца, за мат — теряют. Рейтинг: `/top`"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -82,7 +98,7 @@ async def cmd_mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status_str = f"🔴 Активный мут (до {muted_until})"
 
     text = (
-        f"📊 **Статистика участника [{user.full_name}](tg://user?id={user.id}):**\n\n"
+        f"📊 **Статистика участника {text_utils.user_mention(user.full_name, user.id)}:**\n\n"
         f"• Звание: {badge} **{title}**\n"
         f"• Репутация (баллы Миротворца): `{pts}` 🕊️\n"
         f"• Количество нарушений: `{violations}`\n"
@@ -102,12 +118,21 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reporter = message.from_user
     chat = update.effective_chat
 
+    # from_user отсутствует у сообщений от имени канала — раньше здесь падал AttributeError
+    if target_msg.from_user:
+        author_str = text_utils.user_mention(target_msg.from_user.full_name, target_msg.from_user.id)
+    else:
+        author_str = "неизвестный отправитель (сообщение от имени канала)"
+
+    reporter_str = text_utils.user_mention(reporter.full_name, reporter.id) if reporter else "Участник"
+    report_body = target_msg.text or target_msg.caption or "[Медиа/НЕТ ТЕКСТА]"
+
     report_text = (
         f"🚨 **Сигнал о конфликте / нарушении!**\n\n"
-        f"• Отправитель отчёта: [{reporter.full_name}](tg://user?id={reporter.id})\n"
-        f"• Чат: {chat.title}\n"
-        f"• Автор сообщения: [{target_msg.from_user.full_name}](tg://user?id={target_msg.from_user.id})\n"
-        f"• Текст сообщения: «{target_msg.text or '[Медиа/НЕТ ТЕКСТА]'}»"
+        f"• Отправитель отчёта: {reporter_str}\n"
+        f"• Чат: {text_utils.escape_md(chat.title or 'без названия')}\n"
+        f"• Автор сообщения: {author_str}\n"
+        f"• Текст сообщения: «{text_utils.escape_md(report_body[:500])}»"
     )
 
     # Use smart notification routing to reach available admin
@@ -154,7 +179,12 @@ async def cmd_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = message.from_user
     user_name = user.full_name if user else "Участник"
-    u_tag = f"@{user.username}" if user and user.username else (f"[{user.full_name}](tg://user?id={user.id})" if user else user_name)
+    if user and user.username:
+        u_tag = f"@{user.username}"
+    elif user:
+        u_tag = text_utils.user_mention(user.full_name, user.id)
+    else:
+        u_tag = user_name
     try:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         ai_reply = await groq_service.generate_ai_reply(prompt, user_name)
@@ -209,12 +239,9 @@ async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for idx, u in enumerate(top_users):
         pts = u.get("peace_points", 0)
         badge, title = database.get_rank_title(pts)
-        uname = u.get("username")
-        if uname:
-            safe_uname = uname.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
-            disp_name = f"@{safe_uname}"
-        else:
-            disp_name = f"ID: {u.get('user_id')}"
+        # username в БД лежит в трёх форматах ("@ник", "ник", "Имя Фамилия"),
+        # поэтому нормализуем — иначе в топе появлялось "@@Иван Петров"
+        disp_name = text_utils.display_username(u.get("username"), u.get("user_id"))
         medal = medals[idx] if idx < len(medals) else f"{idx+1}."
         lines.append(f"{medal} {disp_name} — **{pts}** баллов репутации ({badge} {title})")
 

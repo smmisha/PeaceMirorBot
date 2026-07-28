@@ -82,62 +82,69 @@ SAFE_WORDS: Set[str] = {
     "буй", "буёк", "буек", "буйный", "буйство", "буйства", "буйствами",
 }
 
-# Regex pattern for Russian profanity and insult roots
-RUSSIAN_PROFANITY_REGEX = re.compile(
-    r'\b\w*'
-    r'('
-    r'хуй|хуйн|хуя|хуе|хуё|хуи|хул|хуу|хер|'
+# --- Profanity roots ---------------------------------------------------------
+# ВАЖНО: корни "еб", "ху", "хер" ищутся ТОЛЬКО с начала слова (или после реальной
+# приставки). Без этого якоря фрагмент попадал в середину обычных слов и бот банил
+# "хлеба", "требую", "волшебный", "парикмахер", "жребий", "колебания", "чебуреки".
+
+# Приставки, после которых корень остаётся матерным (заебал, доебался, разъебать).
+# Односимвольные "с"/"в" сюда НЕ входят: иначе "себе" читается как "с"+"ебе".
+_PFX_EB = r'(?:за|по|на|до|у|вы|про|при|пере|недо|ни|раз|разъ|отъ|подъ|съ|сь|объ|изъ)?'
+_PFX_HU = r'(?:ни|до|по|на|о|а|не|за|пере|у|вы|от|под|раз)?'
+
+# "еб"/"ёб" + гласная/н/л — покрывает ебать, ебло, ебнул, ёбаный, ебут, ебись
+_ROOT_EB = r'[её]б(?:[аеёиуы]|н|л|\b)'
+# "ху" + й/я/е/ё/и/у — НЕ трогает худой, хутор, хурма, хуже, художник
+_ROOT_HU = r'ху[йяеёиу]'
+
+_HARD_CORE = (
+    rf'\b{_PFX_HU}{_ROOT_HU}|'
+    rf'\b{_PFX_EB}{_ROOT_EB}|'
+    r'долбо[её]б|'
     r'пизд|пзд|пидар|пидор|'
     r'блядь|бляд|\bбля\b|\bблят\b|'
-    r'еба|ебет|ебёт|еби|ебан|ебат|ёба|ёбн|ебу|ебы|ебн|отъеб|разъеб|заеб|проеб|наеб|доеб|съеб|уеб|поеб|подъеб|выеб|'
     r'мудак|мудил|'
     r'гандон|гондон|'
-    r'долбоеб|долбоёб|'
+    r'залуп'
+)
+
+# Мягкие корни: оскорбления и грубость, которые МОЖНО занести в белый список
+_SOFT_EXTRA = (
+    rf'\b{_PFX_HU}хер|'
     r'шлюх|сука|сучк|сучин|'
-    r'залуп|ублюд|выродок|гнид|тварь|паскуд|дроч|'
+    r'ублюд|выродок|гнид|тварь|паскуд|дроч|'
     r'мразь|мрази'
-    r')'
-    r'\w*\b',
-    re.IGNORECASE
 )
 
-# Regex pattern for Latin lookalikes and English translit profanity bypasses
-LATIN_PROFANITY_REGEX = re.compile(
-    r'\b\w*('
-    r'xuy|xuj|huj|xui|xyi|xue|xuya|xuyn|huyn|xueta|hueta|xuesos|huesos|'
-    r'pizd|pzd|pizdet|pizdec|pizdos|pizdu|pizdat|pizdab|'
-    r'blyat|blyad|blia|blya|bliat|bliad|bitch|'
-    r'ebat|ebal|ebanut|ebalnik|ebani|ebala|ebuc|yebat|yebal|yeban|yebut|'
-    r'suka|cyka|'
-    r'mudak|mudil|gandon|gondon'
-    r')\w*\b',
-    re.IGNORECASE
-)
-
+# Regex pattern for Russian profanity and insult roots
+RUSSIAN_PROFANITY_REGEX = re.compile(f'(?:{_HARD_CORE}|{_SOFT_EXTRA})', re.IGNORECASE)
 
 # Strict Regex pattern for core Russian profanity (hard mat) - CANNOT BE WHITELISTED
-HARD_PROFANITY_REGEX = re.compile(
-    r'('
-    r'хуй|хуйн|хуя|хуе|хуё|хуи|хул|хуу|хер|'
-    r'пизд|пзд|пидар|пидор|'
-    r'блядь|бляд|\bбля\b|\bблят\b|'
-    r'еба|ебет|ебёт|еби|ебан|ебат|ёба|ёбн|ебу|ебы|ебн|отъеб|разъеб|заеб|проеб|наеб|доеб|съеб|уеб|поеб|подъеб|выеб|'
-    r'мудак|мудил|'
-    r'гандон|гондон|'
-    r'долбоеб|долбоёб|'
-    r'залуп'
-    r')',
-    re.IGNORECASE
-)
+HARD_PROFANITY_REGEX = re.compile(f'(?:{_HARD_CORE})', re.IGNORECASE)
 
-LATIN_HARD_PROFANITY_REGEX = re.compile(
-    r'('
-    r'xuy|xuj|huj|xui|xyi|xue|xuya|xuyn|huyn|xueta|hueta|xuesos|huesos|'
-    r'pizd|pzd|pizdet|pizdec|pizdos|pizdu|pizdat|pizdab|'
-    r'blyat|blyad|blia|blya|bliat|bliad|bitch|'
-    r'ebat|ebal|ebanut|ebalnik|ebani|ebala|ebuc|yebat|yebal|yeban|yebut|'
-    r'mudak|mudil|gandon|gondon'
-    r')',
+# --- Latin / translit --------------------------------------------------------
+# Чисто латинские слова НЕ прогоняются через CHAR_MAP (иначе eBay -> "ебау",
+# xerox -> "херох", hue -> "хуе"), поэтому здесь перечислены транслит-варианты явно.
+_LATIN_PFX = r'(?:za|po|na|do|u|vy|pro|pere|ni|raz|ot|pod)?'
+_LATIN_HARD_CORE = (
+    rf'\b{_LATIN_PFX}(?:xu[yjiea]|xuya|xuyn|xyi|xyu|hu[yj]|huya|huyn|huesos|xuesos|hueta|xueta)|'
+    rf'\b{_LATIN_PFX}(?:[yj]?eb(?:at|al|an|ash|et|ut|u4|uc|lan|lo|nut|nul|is))|'
+    r'\bpizd|\bpzd|\bpidor|\bpidar|'
+    r'\bblya|\bblia|\bblyad|\bblyat|\bbliad|\bbliat|'
+    r'\bdolboeb|\bdolbaeb|\bzalup|'
+    r'\bmudak|\bmudil|\bgandon|\bgondon'
+)
+_LATIN_SOFT_EXTRA = r'\bsuka|\bcuka|\bcyka|\bcuko|\bsuchk|\bbitch|\bmraz'
+
+LATIN_PROFANITY_REGEX = re.compile(f'(?:{_LATIN_HARD_CORE}|{_LATIN_SOFT_EXTRA})', re.IGNORECASE)
+LATIN_HARD_PROFANITY_REGEX = re.compile(f'(?:{_LATIN_HARD_CORE})', re.IGNORECASE)
+
+# Продуктивные основы, которые всегда безопасны (Херсон, херсонская, хулиганить...).
+# Нужны потому, что перечислить все падежные формы в SAFE_WORDS нереально.
+SAFE_STEM_REGEX = re.compile(
+    r'^(?:херсон|херувим|хербала|хертфорд|херес|'
+    r'хулиган|хулига|хулит|хулы|хула\b|'
+    r'волшеб|хлеб|требов|требу|потреб|чебур|жреби|колеб|парикмахер|сучков)',
     re.IGNORECASE
 )
 
@@ -155,6 +162,11 @@ def clean_invisible(text: str) -> str:
             continue
         cleaned.append(ch)
     return "".join(cleaned)
+
+
+# clean_invisible раскладывает NFKD и срезает диакритику, поэтому "й" -> "и", "ё" -> "е".
+# Дублируем белый список в этом же виде, иначе "волшебный"/"буйный" туда не попадают.
+SAFE_WORDS |= {clean_invisible(w) for w in SAFE_WORDS}
 
 
 def normalize_text(text: str) -> str:
@@ -196,18 +208,67 @@ def is_hard_profanity(word: str) -> bool:
 def _is_safe_word(word: str, custom_allowed_words: Optional[List[str]] = None) -> bool:
     """
     Check if a word is in the safe words whitelist or custom allowed words.
-    Hard profanity NEVER returns True here.
+
+    Встроенный список SAFE_WORDS/SAFE_STEM_REGEX имеет приоритет над проверкой мата:
+    он выверен вручную, и раньше проверка hard-мата шла первой и молча отключала
+    30 из 186 записей белого списка ("волшебный", "хлеба", "требую", "парикмахер").
+
+    Запрет на whitelisting мата остаётся для КАСТОМНЫХ слов из БД — чтобы админ
+    не мог занести /addsafeword пиздец.
     """
     w_lower = word.lower()
-    if is_hard_profanity(w_lower):
-        return False
-    if w_lower in SAFE_WORDS:
+    if w_lower in SAFE_WORDS or SAFE_STEM_REGEX.match(w_lower):
         return True
     if custom_allowed_words:
         allowed_set = {w.strip().lower() for w in custom_allowed_words}
-        if w_lower in allowed_set:
+        if w_lower in allowed_set and not is_hard_profanity(w_lower):
             return True
     return False
+
+
+_TOKEN_REGEX = re.compile(r'[а-яёa-z0-9]+', re.IGNORECASE)
+_LATIN_ONLY_REGEX = re.compile(r'^[a-z0-9]+$', re.IGNORECASE)
+
+
+def _text_variants(text_lower: str) -> List[str]:
+    """
+    Builds variants of the text to counter splitting bypasses:
+    исходный текст, текст без пунктуации-разделителей ('х.у.й'), и склейка
+    одиночных букв ('х у й' -> 'хуй').
+    """
+    punc_stripped = re.sub(r'[\.\,_\-\*\~\+\=\/\\]+', ' ', text_lower)
+    spaced_collapsed = punc_stripped
+    for _ in range(5):
+        spaced_collapsed = re.sub(
+            r'\b([а-яёa-z0-9])\s+(?=[а-яёa-z0-9]\b)', r'\1', spaced_collapsed, flags=re.IGNORECASE
+        )
+    return [text_lower, punc_stripped, spaced_collapsed]
+
+
+def _check_token(token: str, custom_allowed_words: Optional[List[str]] = None) -> Optional[str]:
+    """
+    Проверяет одно слово. Возвращает само слово при нарушении, иначе None.
+
+    Чисто латинские слова проверяются ТОЛЬКО по явному транслит-списку и не
+    прогоняются через CHAR_MAP — иначе "eBay" превращался в "ебау", "xerox" в
+    "херох", "hue" в "хуе" и всё это ловилось как мат.
+    """
+    if _is_safe_word(token, custom_allowed_words):
+        return None
+
+    if _LATIN_ONLY_REGEX.match(token):
+        for candidate in (token, collapse_repeated(token)):
+            if LATIN_PROFANITY_REGEX.search(candidate):
+                return token
+        return None
+
+    normalized = normalize_text(token)
+    for candidate in (normalized, collapse_repeated(normalized)):
+        if _is_safe_word(candidate, custom_allowed_words):
+            continue
+        if RUSSIAN_PROFANITY_REGEX.search(candidate) or LATIN_PROFANITY_REGEX.search(candidate):
+            return token
+    return None
 
 
 def find_violation(
@@ -218,75 +279,41 @@ def find_violation(
     """
     Checks message text for profanity, targeted insults, or custom bad words.
     Counters invisible unicode, leetspeak, punctuation splitting, and homoglyph bypasses.
-    Filters out safe words (e.g. "употреблять") and allowed words to prevent false positives,
-    UNLESS the word contains hard profanity.
+    Filters out safe words (e.g. "употреблять") and allowed words to prevent false positives.
     Returns (has_violation, matched_word_or_reason).
     """
     if not text:
         return False, None
 
-    text_clean = clean_invisible(text)
+    text_lower = clean_invisible(text).lower()
+    variants = _text_variants(text_lower)
 
-    # 0. Check Latin / Translit Profanity (e.g. xuy, pizda, blyat, etc.)
-    latin_match = LATIN_PROFANITY_REGEX.search(text_clean)
-    if latin_match and not _is_safe_word(latin_match.group(0), custom_allowed_words):
-        return True, latin_match.group(0)
+    # 1. Пословная проверка каждого варианта текста
+    for variant in variants:
+        for token in _TOKEN_REGEX.findall(variant):
+            matched = _check_token(token, custom_allowed_words)
+            if matched:
+                return True, matched
 
-    normalized = normalize_text(text_clean)
-    collapsed = collapse_repeated(normalized)
-
-    # 1. Strip punctuation symbols (e.g. 'х.у.й', 'х_у_й', 'п-и-з-д-а') preserving space separation
-    punc_stripped = re.sub(r'[\.\,_\-\*\~\+\=\/\\]+', ' ', normalized)
-    punc_collapsed = collapse_repeated(punc_stripped)
-
-    # 2. Collapse single-letter spaced words (e.g. 'х у й' -> 'хуй') without chopping normal words like "я тебе"
-    spaced_collapsed = punc_stripped
-    for _ in range(5):
-        spaced_collapsed = re.sub(r'\b([а-яa-z0-9])\s+(?=[а-яa-z0-9]\b)', r'\1', spaced_collapsed, flags=re.IGNORECASE)
-
-    for check_str in (normalized, collapsed, punc_stripped, punc_collapsed, spaced_collapsed):
-        words = re.findall(r'[а-яёa-z0-9]+', check_str, re.IGNORECASE)
-        for word in words:
-            if _is_safe_word(word, custom_allowed_words):
-                continue
-            match = RUSSIAN_PROFANITY_REGEX.search(word)
-            if match:
-                return True, match.group(0)
-            latin_m = LATIN_PROFANITY_REGEX.search(word)
-            if latin_m:
-                return True, latin_m.group(0)
-
-    # 2. Check collapsed text word by word (for repeated character bypasses like "ххууйй")
-    collapsed_words = re.findall(r'[а-яёa-z0-9]+', collapsed, re.IGNORECASE)
-    for word in collapsed_words:
-        if _is_safe_word(word, custom_allowed_words):
-            continue
-        match = RUSSIAN_PROFANITY_REGEX.search(word)
-        if match:
-            return True, match.group(0)
-
-    # 3. Check Custom Bad Words from DB
+    # 2. Кастомный стоп-лист из БД (проверяется по тексту без безопасных слов)
     if custom_bad_words:
-        # Build text without safe words for custom checks
-        unsafe_words = [w for w in words if not _is_safe_word(w, custom_allowed_words)]
-        unsafe_text = " ".join(unsafe_words)
+        base_tokens = _TOKEN_REGEX.findall(text_lower)
+        unsafe_tokens = [t for t in base_tokens if not _is_safe_word(t, custom_allowed_words)]
+        unsafe_text = " ".join(unsafe_tokens)
+        unsafe_collapsed = " ".join(collapse_repeated(normalize_text(t)) for t in unsafe_tokens)
 
         for bw in custom_bad_words:
             bw_clean = bw.strip().lower()
             if not bw_clean:
                 continue
 
+            # Короткие слова — только по границам слова, иначе ловят половину словаря
             if len(bw_clean) <= 3:
                 pattern = r'\b' + re.escape(bw_clean) + r'\b'
             else:
                 pattern = re.escape(bw_clean)
 
-            if re.search(pattern, unsafe_text, re.IGNORECASE):
-                return True, bw
-
-            # Also check collapsed version
-            unsafe_collapsed = " ".join(w for w in collapsed_words if not _is_safe_word(w, custom_allowed_words))
-            if re.search(pattern, unsafe_collapsed, re.IGNORECASE):
+            if re.search(pattern, unsafe_text, re.IGNORECASE) or re.search(pattern, unsafe_collapsed, re.IGNORECASE):
                 return True, bw
 
     return False, None
