@@ -105,7 +105,7 @@ RUSSIAN_PROFANITY_REGEX = re.compile(
 LATIN_PROFANITY_REGEX = re.compile(
     r'\b\w*('
     r'xuy|xuj|huj|xui|xyi|xue|xuya|xuyn|huyn|xueta|hueta|xuesos|huesos|'
-    r'pizd|pizdet|pizdec|pizdos|pizdu|pizdat|pizdab|'
+    r'pizd|pzd|pizdet|pizdec|pizdos|pizdu|pizdat|pizdab|'
     r'blyat|blyad|blia|blya|bliat|bliad|bitch|'
     r'ebat|ebal|ebanut|ebalnik|ebani|ebala|ebuc|yebat|yebal|yeban|yebut|'
     r'suka|cyka|'

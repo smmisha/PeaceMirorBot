@@ -314,7 +314,7 @@ async def summarize_chat_history(history: list[dict]) -> str:
                 {"role": "user", "content": f"Вот последние сообщения из чата:\n\n{formatted_history}"}
             ],
             temperature=0.4,
-            max_tokens=400,
+            max_tokens=600,
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
