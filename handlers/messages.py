@@ -185,7 +185,11 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 try:
                     await context.bot.send_chat_action(chat_id=chat.id, action="typing")
                     ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name)
-                    await message.reply_text(ai_reply, parse_mode="Markdown")
+                    try:
+                        await message.reply_text(ai_reply, parse_mode="Markdown")
+                    except Exception:
+                        # Fallback to plain text if Telegram Markdown parsing fails
+                        await message.reply_text(ai_reply)
                 except Exception as e:
                     logger.error(f"Error sending AI reply to user {user.id}: {e}")
                     try:

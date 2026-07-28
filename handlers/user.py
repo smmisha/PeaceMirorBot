@@ -145,7 +145,10 @@ async def cmd_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         ai_reply = await groq_service.generate_ai_reply(prompt, user_name)
-        await message.reply_text(ai_reply, parse_mode="Markdown")
+        try:
+            await message.reply_text(ai_reply, parse_mode="Markdown")
+        except Exception:
+            await message.reply_text(ai_reply)
     except Exception as e:
         logger.error(f"Error in cmd_ai: {e}")
         try:
