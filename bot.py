@@ -93,7 +93,6 @@ async def post_init(application):
             BotCommand("removesafeword", "Удалить слово из разрешённых"),
             BotCommand("safewordlist", "Показать список разрешённых слов"),
             BotCommand("resetstats", "Сбросить статистику (/resetstats @username | all)"),
-            BotCommand("chattag", "Вкл/Выкл случайные отклики ИИ (/chattag on/off)"),
             BotCommand("uncaptcha", "Снять капчу с пользователя (/uncaptcha @username)"),
             BotCommand("help", "Справка по командам"),
         ]
@@ -181,7 +180,6 @@ def main():
     app.add_handler(CommandHandler("disallowword", admin.cmd_removesafeword))
     app.add_handler(CommandHandler("safewordlist", admin.cmd_safewordlist))
     app.add_handler(CommandHandler("resetstats", admin.cmd_resetstats))
-    app.add_handler(CommandHandler("chattag", admin.cmd_chattag))
     app.add_handler(CommandHandler("uncaptcha", admin.cmd_uncaptcha))
     app.add_handler(CommandHandler("passcaptcha", admin.cmd_uncaptcha))
 

@@ -424,55 +424,7 @@ async def cmd_resetstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(f"✅ Статистика нарушений и мут для {mention} полностью сброшены.", parse_mode="Markdown")
 
 
-async def cmd_chattag(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command /chattag [on | off] to toggle random organic AI chat tags."""
-    if not await is_admin(update, context):
-        await update.message.reply_text("❌ У вас нет прав администратора.")
-        return
 
-    await _track_admin(update, context)
-
-    arg = context.args[0].strip().lower() if context.args else ""
-    setting_key = f"random_tag_{update.effective_chat.id}"
-    current_val = await database.get_setting(DB_PATH, setting_key, "0")
-
-    if arg in ("on", "1", "вкл", "включить"):
-        if current_val == "1":
-            await update.effective_message.reply_text(
-                "ℹ️ **Режим ИИ по наитию и душевной поддержки УЖЕ ВКЛЮЧЕН!**\n"
-                "Бот уже активен в чате и поддерживает участников.",
-                parse_mode="Markdown"
-            )
-        else:
-            await database.set_setting(DB_PATH, setting_key, "1")
-            await update.effective_message.reply_text(
-                "🟢 **Режим ИИ по наитию и душевной поддержки ВКЛЮЧЕН!**\n"
-                "• На сообщения про тревогу/панику/усталость бот теперь отвечает на 100% со словами поддержки.\n"
-                "• На обычные сообщения вклинивается спонтанно по настроению ИИ.",
-                parse_mode="Markdown"
-            )
-    elif arg in ("off", "0", "выкл", "выключить"):
-        if current_val == "0":
-            await update.effective_message.reply_text(
-                "ℹ️ **Режим ИИ по наитию УЖЕ ВЫКЛЮЧЕН.**\n"
-                "Бот отвечает строго только при прямом вызове (/ai, реплай, @тег).",
-                parse_mode="Markdown"
-            )
-        else:
-            await database.set_setting(DB_PATH, setting_key, "0")
-            await update.effective_message.reply_text(
-                "🛑 **Режим ИИ по наитию ВЫКЛЮЧЕН!**\n"
-                "Бот будет отвечать строго только при прямом вызове (/ai, реплай или @упоминание).",
-                parse_mode="Markdown"
-            )
-    else:
-        status_text = "🟢 **ВКЛЮЧЕНО**" if current_val == "1" else "🔴 **ВЫКЛЮЧЕНО**"
-        await update.effective_message.reply_text(
-            f"🎲 **Текущий статус ИИ по наитию и поддержки:** {status_text}\n\n"
-            f"• Включить: `/chattag on`\n"
-            f"• Выключить: `/chattag off`",
-            parse_mode="Markdown"
-        )
 
 
 async def cmd_uncaptcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
