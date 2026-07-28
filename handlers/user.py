@@ -14,6 +14,7 @@ from moderation import format_mute_duration
 import database
 import notification
 import text_utils
+import telegram_utils
 
 logger = logging.getLogger("PeaceMirorBot.handlers.user")
 
@@ -51,8 +52,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `/mute <минуты> <@ник|ID> <причина>` — мут участнику (или ответом на сообщение)\n"
         "• `/unmute <@ник|ID>` — снять мут (участник затем проходит капчу)\n"
         "• `/warn <@ник|ID> <причина>` — выдать предупреждение\n"
-        "• `/addword`, `/removeword`, `/wordlist` — кастомный стоп-лист\n"
-        "• `/addsafeword`, `/removesafeword`, `/safewordlist` — список разрешённых слов\n"
+        "• `/addword`, `/removeword`, `/wordlist` — стоп-лист **этого чата**\n"
+        "• `/addsafeword`, `/removesafeword`, `/safewordlist` — разрешённые слова **этого чата**\n"
         "• `/resetstats <@ник|ID|all>` — сбросить статистику нарушений\n"
         "• `/uncaptcha <@ник|ID>` — снять капчу с участника\n\n"
         "🛡️ Новые участники проходят капчу: 3 минуты на кнопку, иначе через 24 часа кик."
@@ -185,8 +186,8 @@ async def cmd_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
         u_tag = text_utils.user_mention(user.full_name, user.id)
     else:
         u_tag = user_name
+    await telegram_utils.send_chat_action_safe(context, update.effective_chat.id, "typing")
     try:
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         ai_reply = await groq_service.generate_ai_reply(prompt, user_name)
         full_reply = f"{u_tag}, {ai_reply}"
         try:
@@ -207,8 +208,8 @@ async def cmd_meme(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not message:
         return
 
+    await telegram_utils.send_chat_action_safe(context, update.effective_chat.id, "upload_photo")
     try:
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
         url, caption = await groq_service.fetch_meme()
         if url:
             await message.reply_photo(photo=url, caption=caption)
@@ -268,8 +269,8 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    await telegram_utils.send_chat_action_safe(context, chat.id, "typing")
     try:
-        await context.bot.send_chat_action(chat_id=chat.id, action="typing")
         summary_text = await groq_service.summarize_chat_history(today_history)
         await message.reply_text(summary_text, parse_mode="Markdown")
     except Exception as e:
