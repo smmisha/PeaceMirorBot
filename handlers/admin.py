@@ -393,24 +393,8 @@ async def cmd_resetstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check if admin requested to reset ALL users at once (/resetstats all or /resetstats все)
     if context.args and context.args[0].strip().lower() in ("all", "все", "*"):
-        import aiosqlite
-        chat = update.effective_chat
-        async with aiosqlite.connect(DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute("SELECT DISTINCT user_id FROM mutes WHERE is_active = 1 AND chat_id = ?", (chat.id,)) as cursor:
-                rows = await cursor.fetchall()
-                for row in rows:
-                    try:
-                        await context.bot.restrict_chat_member(
-                            chat_id=chat.id,
-                            user_id=row["user_id"],
-                            permissions=UNMUTED_PERMISSIONS
-                        )
-                    except Exception as e:
-                        logger.warning(f"Could not unrestrict user {row['user_id']}: {e}")
-
         await database.reset_all_users_stats(DB_PATH)
-        await update.effective_message.reply_text("🔄 **Статистика нарушений, варны и все муты для ВСЕХ пользователей чата успешно сброшены!**", parse_mode="Markdown")
+        await update.effective_message.reply_text("🔄 **Статистика нарушений и варны для ВСЕХ пользователей чата успешно сброшены!**\n*(Защита капчи для несертифицированных ботов осталась нетронутой).* ", parse_mode="Markdown")
         return
 
     user_id, username, mention = await _resolve_target_user(update, context)
