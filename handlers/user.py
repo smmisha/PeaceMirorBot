@@ -196,7 +196,11 @@ async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pts = u.get("peace_points", 0)
         badge, title = database.get_rank_title(pts)
         uname = u.get("username")
-        disp_name = f"@{uname}" if uname else f"ID: {u.get('user_id')}"
+        if uname:
+            safe_uname = uname.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
+            disp_name = f"@{safe_uname}"
+        else:
+            disp_name = f"ID: {u.get('user_id')}"
         medal = medals[idx] if idx < len(medals) else f"{idx+1}."
         lines.append(f"{medal} {disp_name} — **{pts}** баллов репутации ({badge} {title})")
 
