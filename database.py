@@ -322,18 +322,24 @@ async def get_top_peacekeepers(db_path: str, limit: int = 10) -> list[dict]:
             return [dict(r) for r in rows]
 
 
-async def save_chat_message(db_path: str, chat_id: int, user_name: str, message_text: str):
-    """Saves a chat message to persistent SQLite storage for /summary."""
+async def cleanup_old_chat_history(db_path: str):
+    """Deletes chat_history messages from previous days (keeping only current day's messages). Mutes/bans are unaffected."""
     try:
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute("DELETE FROM chat_history WHERE created_at < datetime('now', 'start of day', 'localtime')")
+            await db.commit()
+    except Exception as e:
+        logger.error(f"Error cleaning up old chat history: {e}")
+
+
+async def save_chat_message(db_path: str, chat_id: int, user_name: str, message_text: str):
+    """Saves a chat message to persistent SQLite storage for /summary, auto-clearing previous days' messages."""
+    try:
+        await cleanup_old_chat_history(db_path)
         async with aiosqlite.connect(db_path) as db:
             await db.execute(
                 "INSERT INTO chat_history (chat_id, user_name, message_text) VALUES (?, ?, ?)",
                 (chat_id, user_name, message_text[:300])
-            )
-            # Prune ancient messages if table exceeds 300 entries for this chat
-            await db.execute(
-                "DELETE FROM chat_history WHERE chat_id = ? AND id NOT IN (SELECT id FROM chat_history WHERE chat_id = ? ORDER BY id DESC LIMIT 300)",
-                (chat_id, chat_id)
             )
             await db.commit()
     except Exception as e:
@@ -341,12 +347,13 @@ async def save_chat_message(db_path: str, chat_id: int, user_name: str, message_
 
 
 async def get_recent_chat_history(db_path: str, chat_id: int, limit: int = 150) -> list[dict]:
-    """Retrieves recent chat messages from persistent SQLite storage for /summary."""
+    """Retrieves current day's chat messages from persistent SQLite storage for /summary."""
     try:
+        await cleanup_old_chat_history(db_path)
         async with aiosqlite.connect(db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                "SELECT user_name, message_text, created_at FROM chat_history WHERE chat_id = ? ORDER BY id DESC LIMIT ?",
+                "SELECT user_name, message_text, created_at FROM chat_history WHERE chat_id = ? AND created_at >= datetime('now', 'start of day', 'localtime') ORDER BY id DESC LIMIT ?",
                 (chat_id, limit)
             )
             rows = await cursor.fetchall()
