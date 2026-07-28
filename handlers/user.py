@@ -152,14 +152,17 @@ async def cmd_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("💡 **Напишите вопрос к ИИ:**\nПример: `/ai что думаешь по поводу этого спора?`", parse_mode="Markdown")
         return
 
-    user_name = message.from_user.full_name if message.from_user else "Участник"
+    user = message.from_user
+    user_name = user.full_name if user else "Участник"
+    u_tag = f"@{user.username}" if user and user.username else (f"[{user.full_name}](tg://user?id={user.id})" if user else user_name)
     try:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         ai_reply = await groq_service.generate_ai_reply(prompt, user_name)
+        full_reply = f"{u_tag}, {ai_reply}"
         try:
-            await message.reply_text(ai_reply, parse_mode="Markdown")
+            await message.reply_text(full_reply, parse_mode="Markdown")
         except Exception:
-            await message.reply_text(ai_reply)
+            await message.reply_text(full_reply)
     except Exception as e:
         logger.error(f"Error in cmd_ai: {e}")
         try:
