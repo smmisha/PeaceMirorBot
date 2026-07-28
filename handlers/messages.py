@@ -190,7 +190,8 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 logger.info(f"AI response requested by user {user.id} ({user.full_name}): '{prompt}'")
                 try:
                     await context.bot.send_chat_action(chat_id=chat.id, action="typing")
-                    ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name)
+                    u_tag = f"@{user.username}" if user.username else f"[{user.full_name}](tg://user?id={user.id})"
+                    ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name, user_mention=u_tag)
                     try:
                         await message.reply_text(ai_reply, parse_mode="Markdown")
                     except Exception:
@@ -256,7 +257,8 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
                                     f"ВАЖНО: Пиши ОЧЕНЬ коротко (1 предложение)."
                                 )
 
-                            ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name)
+                            u_tag = f"@{user.username}" if user.username else f"[{user.full_name}](tg://user?id={user.id})"
+                            ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name, user_mention=u_tag)
                             await message.reply_text(ai_reply, parse_mode="Markdown")
                             # Set cooldown timestamp so bot does NOT cling to this user for 10 minutes
                             last_replied_map[user.id] = now_ts
