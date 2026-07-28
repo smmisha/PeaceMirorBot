@@ -11,6 +11,7 @@ from conflict_detector import find_violation
 import moderation
 import groq_service
 import text_utils
+import telegram_utils
 
 logger = logging.getLogger("PeaceMirorBot.handlers.messages")
 
@@ -140,8 +141,9 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await database.save_chat_message(DB_PATH, chat.id, user.full_name, text_to_check[:300])
 
     # Retrieve custom bad words and custom allowed words from database
-    custom_bad_words = await database.get_bad_words(DB_PATH)
-    custom_allowed_words = await database.get_allowed_words(DB_PATH)
+    # Стоп-лист и белый список — свои у каждого чата
+    custom_bad_words = await database.get_bad_words(DB_PATH, chat.id)
+    custom_allowed_words = await database.get_allowed_words(DB_PATH, chat.id)
 
     has_violation, matched_word = find_violation(text_to_check, custom_bad_words, custom_allowed_words)
 
@@ -207,8 +209,8 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
             if prompt:
                 logger.info(f"AI response requested by user {user.id} ({user.full_name}): '{prompt}'")
+                await telegram_utils.send_chat_action_safe(context, chat.id, "typing")
                 try:
-                    await context.bot.send_chat_action(chat_id=chat.id, action="typing")
                     u_tag = f"@{user.username}" if user.username else text_utils.user_mention(user.full_name, user.id)
                     ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name)
                     full_reply = f"{u_tag}, {ai_reply}"

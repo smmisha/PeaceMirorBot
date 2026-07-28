@@ -288,20 +288,41 @@ async def cmd_warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def _wordlist_chat_id(update: Update) -> int | None:
+    """
+    Возвращает chat_id для операций со списками слов.
+
+    Списки свои у каждого чата, поэтому в личке команда бессмысленна: непонятно,
+    какому чату принадлежало бы слово.
+    """
+    chat = update.effective_chat
+    if not chat or chat.type == "private":
+        await update.message.reply_text(
+            "⚠️ У каждого чата свой стоп-лист, поэтому команду нужно вызывать "
+            "внутри группы, а не в личке с ботом."
+        )
+        return None
+    return chat.id
+
+
 async def cmd_addword(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command /addword <word>."""
+    """Admin command /addword <word> — adds to THIS chat's stop-list."""
     if not await is_admin(update, context):
         await update.message.reply_text("❌ У вас нет прав администратора.")
         return
 
     await _track_admin(update, context)
 
+    chat_id = await _wordlist_chat_id(update)
+    if chat_id is None:
+        return
+
     if not context.args:
         await update.message.reply_text("⚠️ Укажите слово или фразу: `/addword <слово>`", parse_mode="Markdown")
         return
 
     word = " ".join(context.args).strip().lower()
-    success = await database.add_bad_word(DB_PATH, word)
+    success = await database.add_bad_word(DB_PATH, chat_id, word)
     if success:
         await update.message.reply_text(f"✅ Слово `{text_utils.escape_md(word)}` успешно добавлено в стоп-лист.", parse_mode="Markdown")
     else:
@@ -309,19 +330,23 @@ async def cmd_addword(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_removeword(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command /removeword <word>."""
+    """Admin command /removeword <word> — removes from THIS chat's stop-list."""
     if not await is_admin(update, context):
         await update.message.reply_text("❌ У вас нет прав администратора.")
         return
 
     await _track_admin(update, context)
 
+    chat_id = await _wordlist_chat_id(update)
+    if chat_id is None:
+        return
+
     if not context.args:
         await update.message.reply_text("⚠️ Укажите слово: `/removeword <слово>`", parse_mode="Markdown")
         return
 
     word = " ".join(context.args).strip().lower()
-    success = await database.remove_bad_word(DB_PATH, word)
+    success = await database.remove_bad_word(DB_PATH, chat_id, word)
     if success:
         await update.message.reply_text(f"✅ Слово `{text_utils.escape_md(word)}` удалено из стоп-листа.", parse_mode="Markdown")
     else:
@@ -329,29 +354,40 @@ async def cmd_removeword(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_wordlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command /wordlist."""
+    """Admin command /wordlist — shows THIS chat's stop-list."""
     if not await is_admin(update, context):
         await update.message.reply_text("❌ У вас нет прав администратора.")
         return
 
     await _track_admin(update, context)
 
-    words = await database.get_bad_words(DB_PATH)
-    if not words:
-        await update.message.reply_text("📋 Стоп-лист кастомных слов пуст.")
+    chat_id = await _wordlist_chat_id(update)
+    if chat_id is None:
         return
 
-    words_formatted = "\n".join(f"• `{w}`" for w in words)
-    await update.message.reply_text(f"📋 **Кастомный стоп-лист слов ({len(words)}):**\n\n{words_formatted}", parse_mode="Markdown")
+    words = await database.get_bad_words(DB_PATH, chat_id)
+    if not words:
+        await update.message.reply_text("📋 Стоп-лист этого чата пуст.")
+        return
+
+    words_formatted = "\n".join(f"• `{text_utils.escape_md(w)}`" for w in words)
+    await update.message.reply_text(
+        f"📋 **Стоп-лист этого чата ({len(words)}):**\n\n{words_formatted}",
+        parse_mode="Markdown"
+    )
 
 
 async def cmd_addsafeword(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command /addsafeword <word> (or /allowword)."""
+    """Admin command /addsafeword <word> (or /allowword) — for THIS chat."""
     if not await is_admin(update, context):
         await update.message.reply_text("❌ У вас нет прав администратора.")
         return
 
     await _track_admin(update, context)
+
+    chat_id = await _wordlist_chat_id(update)
+    if chat_id is None:
+        return
 
     if not context.args:
         await update.message.reply_text("⚠️ Укажите слово: `/addsafeword <слово>`", parse_mode="Markdown")
@@ -369,7 +405,7 @@ async def cmd_addsafeword(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    success = await database.add_allowed_word(DB_PATH, word)
+    success = await database.add_allowed_word(DB_PATH, chat_id, word)
     if success:
         await update.message.reply_text(f"✅ Слово `{text_utils.escape_md(word)}` успешно добавлено в список разрешённых слов.", parse_mode="Markdown")
     else:
@@ -377,19 +413,23 @@ async def cmd_addsafeword(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_removesafeword(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command /removesafeword <word>."""
+    """Admin command /removesafeword <word> — for THIS chat."""
     if not await is_admin(update, context):
         await update.message.reply_text("❌ У вас нет прав администратора.")
         return
 
     await _track_admin(update, context)
 
+    chat_id = await _wordlist_chat_id(update)
+    if chat_id is None:
+        return
+
     if not context.args:
         await update.message.reply_text("⚠️ Укажите слово: `/removesafeword <слово>`", parse_mode="Markdown")
         return
 
     word = " ".join(context.args).strip().lower()
-    success = await database.remove_allowed_word(DB_PATH, word)
+    success = await database.remove_allowed_word(DB_PATH, chat_id, word)
     if success:
         await update.message.reply_text(f"✅ Слово `{text_utils.escape_md(word)}` удалено из списка разрешённых слов.", parse_mode="Markdown")
     else:
@@ -397,20 +437,27 @@ async def cmd_removesafeword(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def cmd_safewordlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command /safewordlist."""
+    """Admin command /safewordlist — shows THIS chat's whitelist."""
     if not await is_admin(update, context):
         await update.message.reply_text("❌ У вас нет прав администратора.")
         return
 
     await _track_admin(update, context)
 
-    words = await database.get_allowed_words(DB_PATH)
-    if not words:
-        await update.message.reply_text("📋 Список разрешённых слов пуст.")
+    chat_id = await _wordlist_chat_id(update)
+    if chat_id is None:
         return
 
-    words_formatted = "\n".join(f"• `{w}`" for w in words)
-    await update.message.reply_text(f"📋 **Список разрешённых слов ({len(words)}):**\n\n{words_formatted}", parse_mode="Markdown")
+    words = await database.get_allowed_words(DB_PATH, chat_id)
+    if not words:
+        await update.message.reply_text("📋 Список разрешённых слов этого чата пуст.")
+        return
+
+    words_formatted = "\n".join(f"• `{text_utils.escape_md(w)}`" for w in words)
+    await update.message.reply_text(
+        f"📋 **Разрешённые слова этого чата ({len(words)}):**\n\n{words_formatted}",
+        parse_mode="Markdown"
+    )
 
 
 async def cmd_resetstats(update: Update, context: ContextTypes.DEFAULT_TYPE):

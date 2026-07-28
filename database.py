@@ -16,7 +16,9 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS bad_words (
-    word TEXT PRIMARY KEY
+    chat_id INTEGER NOT NULL,
+    word TEXT NOT NULL,
+    PRIMARY KEY (chat_id, word)
 );
 
 CREATE TABLE IF NOT EXISTS mutes (
@@ -50,7 +52,9 @@ CREATE TABLE IF NOT EXISTS chat_history (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS allowed_words (
-    word TEXT PRIMARY KEY
+    chat_id INTEGER NOT NULL,
+    word TEXT NOT NULL,
+    PRIMARY KEY (chat_id, word)
 );
 
 CREATE TABLE IF NOT EXISTS captchas (
@@ -84,11 +88,68 @@ async def init_db(db_path: str) -> bool:
             except Exception:
                 pass
             await db.commit()
+
+            # Migration: стоп-листы стали пер-чатовыми
+            await _migrate_wordlists_to_per_chat(db)
         logger.info("Database schema initialized.")
         return True
     except Exception as e:
         logger.critical(f"Database initialization failed: {e}")
         return False
+
+
+async def _known_chat_ids(db) -> list[int]:
+    """Все чаты, которые бот когда-либо видел (по следам в остальных таблицах)."""
+    async with db.execute(
+        """
+        SELECT DISTINCT chat_id FROM (
+            SELECT chat_id FROM chat_history
+            UNION SELECT chat_id FROM mutes
+            UNION SELECT chat_id FROM admin_activity
+            UNION SELECT chat_id FROM captchas
+        )
+        """
+    ) as cursor:
+        return [row[0] for row in await cursor.fetchall()]
+
+
+async def _migrate_wordlists_to_per_chat(db) -> None:
+    """
+    Переводит bad_words/allowed_words со старой глобальной схемы (word PRIMARY KEY)
+    на пер-чатовую (chat_id, word).
+
+    Старые слова были общими для всех чатов, поэтому копируются в каждый чат,
+    который бот уже знает, — иначе после обновления настроенные стоп-листы
+    молча перестали бы действовать.
+    """
+    for table in ("bad_words", "allowed_words"):
+        async with db.execute(f"PRAGMA table_info({table})") as cursor:
+            columns = {row[1] for row in await cursor.fetchall()}
+        if "chat_id" in columns:
+            continue
+
+        async with db.execute(f"SELECT word FROM {table}") as cursor:
+            legacy_words = [row[0] for row in await cursor.fetchall()]
+
+        chat_ids = await _known_chat_ids(db)
+
+        await db.execute(f"ALTER TABLE {table} RENAME TO {table}_legacy")
+        await db.execute(
+            f"CREATE TABLE {table} ("
+            f"chat_id INTEGER NOT NULL, word TEXT NOT NULL, PRIMARY KEY (chat_id, word))"
+        )
+        if legacy_words and chat_ids:
+            await db.executemany(
+                f"INSERT OR IGNORE INTO {table} (chat_id, word) VALUES (?, ?)",
+                [(chat_id, word) for chat_id in chat_ids for word in legacy_words]
+            )
+        await db.execute(f"DROP TABLE {table}_legacy")
+        await db.commit()
+
+        logger.info(
+            f"Migrated {table} to per-chat schema: "
+            f"{len(legacy_words)} word(s) copied into {len(chat_ids)} chat(s)."
+        )
 
 
 def normalize_username(username: str | None) -> str | None:
@@ -229,33 +290,39 @@ async def get_expired_mutes(db_path: str) -> list[dict]:
             return [dict(r) for r in rows]
 
 
-async def add_bad_word(db_path: str, word: str) -> bool:
-    """Adds a custom bad word to DB (lower-case)."""
+async def add_bad_word(db_path: str, chat_id: int, word: str) -> bool:
+    """Adds a custom bad word to this chat's stop-list (lower-case)."""
     word_clean = word.strip().lower()
     if not word_clean:
         return False
     async with aiosqlite.connect(db_path) as db:
         try:
-            await db.execute("INSERT INTO bad_words (word) VALUES (?)", (word_clean,))
+            await db.execute(
+                "INSERT INTO bad_words (chat_id, word) VALUES (?, ?)", (chat_id, word_clean)
+            )
             await db.commit()
             return True
         except aiosqlite.IntegrityError:
             return False
 
 
-async def remove_bad_word(db_path: str, word: str) -> bool:
-    """Removes a custom bad word from DB."""
+async def remove_bad_word(db_path: str, chat_id: int, word: str) -> bool:
+    """Removes a custom bad word from this chat's stop-list."""
     word_clean = word.strip().lower()
     async with aiosqlite.connect(db_path) as db:
-        cursor = await db.execute("DELETE FROM bad_words WHERE word = ?", (word_clean,))
+        cursor = await db.execute(
+            "DELETE FROM bad_words WHERE chat_id = ? AND word = ?", (chat_id, word_clean)
+        )
         await db.commit()
         return cursor.rowcount > 0
 
 
-async def get_bad_words(db_path: str) -> list[str]:
-    """Retrieves all custom bad words from DB."""
+async def get_bad_words(db_path: str, chat_id: int) -> list[str]:
+    """Retrieves this chat's custom bad words."""
     async with aiosqlite.connect(db_path) as db:
-        async with db.execute("SELECT word FROM bad_words ORDER BY word ASC") as cursor:
+        async with db.execute(
+            "SELECT word FROM bad_words WHERE chat_id = ? ORDER BY word ASC", (chat_id,)
+        ) as cursor:
             rows = await cursor.fetchall()
             return [r[0] for r in rows]
 
@@ -446,33 +513,39 @@ async def get_recent_chat_history(db_path: str, chat_id: int, limit: int = 150) 
         return []
 
 
-async def add_allowed_word(db_path: str, word: str) -> bool:
-    """Adds a custom allowed word to DB."""
+async def add_allowed_word(db_path: str, chat_id: int, word: str) -> bool:
+    """Adds a custom allowed word to this chat's whitelist."""
     word_clean = word.strip().lower()
     if not word_clean:
         return False
     async with aiosqlite.connect(db_path) as db:
         try:
-            await db.execute("INSERT INTO allowed_words (word) VALUES (?)", (word_clean,))
+            await db.execute(
+                "INSERT INTO allowed_words (chat_id, word) VALUES (?, ?)", (chat_id, word_clean)
+            )
             await db.commit()
             return True
         except aiosqlite.IntegrityError:
             return False
 
 
-async def remove_allowed_word(db_path: str, word: str) -> bool:
-    """Removes a custom allowed word from DB."""
+async def remove_allowed_word(db_path: str, chat_id: int, word: str) -> bool:
+    """Removes a custom allowed word from this chat's whitelist."""
     word_clean = word.strip().lower()
     async with aiosqlite.connect(db_path) as db:
-        cursor = await db.execute("DELETE FROM allowed_words WHERE word = ?", (word_clean,))
+        cursor = await db.execute(
+            "DELETE FROM allowed_words WHERE chat_id = ? AND word = ?", (chat_id, word_clean)
+        )
         await db.commit()
         return cursor.rowcount > 0
 
 
-async def get_allowed_words(db_path: str) -> list[str]:
-    """Retrieves all custom allowed words from DB."""
+async def get_allowed_words(db_path: str, chat_id: int) -> list[str]:
+    """Retrieves this chat's custom allowed words."""
     async with aiosqlite.connect(db_path) as db:
-        async with db.execute("SELECT word FROM allowed_words ORDER BY word ASC") as cursor:
+        async with db.execute(
+            "SELECT word FROM allowed_words WHERE chat_id = ? ORDER BY word ASC", (chat_id,)
+        ) as cursor:
             rows = await cursor.fetchall()
             return [r[0] for r in rows]
 
