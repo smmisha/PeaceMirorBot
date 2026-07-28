@@ -79,16 +79,13 @@ async def _process_user_captcha(context: ContextTypes.DEFAULT_TYPE, chat, user):
         except Exception as e:
             logger.error(f"Error checking/re-applying active mute for re-joining user {user_id}: {e}")
 
-    # Deduplication check: ignore if user already has an active captcha in progress
+    # Clear any old stale captcha jobs if user re-joined
     job_3m_name = f"captcha_timeout_3m_{chat.id}_{user_id}"
     job_24h_name = f"captcha_kick_24h_{chat.id}_{user_id}"
 
-    existing_3m = context.job_queue.get_jobs_by_name(job_3m_name) if context.job_queue else []
-    existing_24h = context.job_queue.get_jobs_by_name(job_24h_name) if context.job_queue else []
-
-    if existing_3m or existing_24h:
-        logger.info(f"Captcha already active for user {user.full_name} ({user_id}) in chat {chat.id}, skipping duplicate.")
-        return
+    if context.job_queue:
+        for j in context.job_queue.get_jobs_by_name(job_3m_name) + context.job_queue.get_jobs_by_name(job_24h_name):
+            j.schedule_removal()
 
     user_mention = _safe_mention(user.full_name, user_id)
 
@@ -186,21 +183,27 @@ async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_
 async def handle_chat_member_updated(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handler triggered when a user joins or re-joins via invite link / join button.
-    Only triggers on transitions from LEFT or BANNED (never RESTRICTED, to avoid loops on unmuting).
+    Triggers whenever the user joins or re-joins the chat (including from RESTRICTED state).
     """
     result = update.chat_member
     if not result:
         return
 
-    old_status = result.old_chat_member.status
-    new_status = result.new_chat_member.status
     user = result.new_chat_member.user
-
     if user.is_bot:
         return
 
-    # Trigger ONLY when user joins from LEFT or BANNED state
-    if old_status in (ChatMember.LEFT, ChatMember.BANNED) and new_status in (ChatMember.MEMBER, ChatMember.RESTRICTED):
+    # Ignore actions performed by the bot itself (e.g. unmuting or restricting)
+    if result.from_user and result.from_user.id == context.bot.id:
+        return
+
+    old_status = result.old_chat_member.status
+    new_status = result.new_chat_member.status
+
+    is_user_self_action = (result.from_user and result.from_user.id == user.id)
+    is_join_transition = old_status in (ChatMember.LEFT, ChatMember.BANNED, ChatMember.RESTRICTED) and new_status in (ChatMember.MEMBER, ChatMember.RESTRICTED)
+
+    if is_user_self_action or is_join_transition:
         logger.info(f"User {user.full_name} ({user.id}) joined/re-joined chat {result.chat.id} (from {old_status} to {new_status}). Triggering captcha.")
         await _process_user_captcha(context, result.chat, user)
 
