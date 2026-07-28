@@ -230,7 +230,7 @@ async def generate_ai_reply(user_prompt: str, user_name: str = "Участник
                     {"role": "user", "content": prompt_content}
                 ],
                 temperature=0.85,
-                max_tokens=180
+                max_tokens=600
             )
             raw_reply = response.choices[0].message.content.strip()
             return fix_mentions(raw_reply)
@@ -269,7 +269,7 @@ async def _call_mistral_fallback(system_prompt: str, prompt_content: str) -> Opt
                 {"role": "user", "content": prompt_content}
             ],
             "temperature": 0.85,
-            "max_tokens": 180
+            "max_tokens": 600
         }
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(url, headers=headers, json=payload)
