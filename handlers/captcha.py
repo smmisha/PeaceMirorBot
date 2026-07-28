@@ -267,7 +267,10 @@ async def handle_captcha_button(update: Update, context: ContextTypes.DEFAULT_TY
         try:
             await query.message.delete()
         except Exception as e:
-            logger.warning(f"Could not delete captcha message on button click: {e}")
+            try:
+                await context.bot.delete_message(chat_id=chat.id, message_id=query.message.message_id)
+            except Exception as ex:
+                logger.error(f"Bot failed to delete captcha message {query.message.message_id} in chat {chat.id}: {ex} (Check bot admin permission 'Can delete messages')")
 
     # Send temporary welcome text (auto-deletes after 10 seconds)
     try:
