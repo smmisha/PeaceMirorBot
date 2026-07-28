@@ -162,6 +162,17 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
             if message.reply_to_message:
                 replied_text = message.reply_to_message.text or message.reply_to_message.caption or ""
+                if not replied_text:
+                    if message.reply_to_message.photo:
+                        replied_text = "[Фотография/Картинка]"
+                    elif message.reply_to_message.sticker:
+                        stk_emoji = message.reply_to_message.sticker.emoji or ""
+                        replied_text = f"[Стикер {stk_emoji}]"
+                    elif message.reply_to_message.animation:
+                        replied_text = "[GIF-анимация]"
+                    else:
+                        replied_text = "[Медиасообщение]"
+
                 replied_author = message.reply_to_message.from_user.full_name if message.reply_to_message.from_user else "Участник"
                 if user_text:
                     prompt = f"Контекст (сообщение от {replied_author}): «{replied_text}»\nВопрос/ответ пользователя: {user_text}"
