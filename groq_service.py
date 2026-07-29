@@ -38,7 +38,7 @@ async def _check_meme_image_safety(image_url: str) -> bool:
         return True
 
     try:
-        import httpx
+        import httpx, re
         url = "https://api.mistral.ai/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {MISTRAL_API_KEY}",
@@ -53,9 +53,10 @@ async def _check_meme_image_safety(image_url: str) -> bool:
                         {
                             "type": "text",
                             "text": (
-                                "Просканируй этот мем. Содержит ли картинка или текст на ней нецензурную лексику (мат на русском/английском), "
-                                "пошлость, эротику, алкоголь или жестокий негатив? "
-                                "Ответь исключительно в JSON формате: {\"is_safe\": true} или {\"is_safe\": false}."
+                                "Просканируй этот мем. Является ли данный мем БЕЗОПАСНЫМ и ПРИЛИЧНЫМ (без мата на русском/английском, "
+                                "без пошлости, без эротики, без агрессии)? "
+                                "Ответь исключительно в JSON формате: {\"is_safe\": true} если мем приличный и безопасный, "
+                                "или {\"is_safe\": false} если в нём есть мат, пошлость или агрессия."
                             )
                         },
                         {
@@ -74,14 +75,34 @@ async def _check_meme_image_safety(image_url: str) -> bool:
             if resp.status_code == 200:
                 data = resp.json()
                 raw_content = data["choices"][0]["message"]["content"].strip()
-                res_json = json.loads(raw_content)
-                is_safe = bool(res_json.get("is_safe", True))
+                if "```" in raw_content:
+                    raw_content = re.sub(r'```(?:json)?', '', raw_content).strip()
+
+                is_safe = True
+                try:
+                    res_json = json.loads(raw_content)
+                    val = res_json.get("is_safe") if res_json.get("is_safe") is not None else res_json.get("safe")
+                    if isinstance(val, str):
+                        is_safe = val.lower().strip() in ("true", "yes", "1")
+                    elif isinstance(val, bool):
+                        is_safe = val
+                    else:
+                        is_safe = bool(val)
+                except Exception:
+                    # Regex fallback if JSON contains unescaped quotes from Vision model
+                    if re.search(r'"is_safe"\s*:\s*false', raw_content, re.IGNORECASE) or re.search(r'"safe"\s*:\s*false', raw_content, re.IGNORECASE):
+                        is_safe = False
+                    else:
+                        is_safe = True
+
                 logger.info(f"Vision safety check result for {image_url}: is_safe={is_safe}")
                 return is_safe
             else:
                 logger.warning(f"Mistral vision safety returned {resp.status_code}: {resp.text}")
     except Exception as e:
         logger.warning(f"Meme vision safety check warning for {image_url}: {e}")
+
+    return True
 
 def convert_webp_to_jpeg(file_bytes: bytes) -> bytes:
     """Converts WEBP, PNG, or sticker bytes to standard JPEG bytes for Vision API."""
