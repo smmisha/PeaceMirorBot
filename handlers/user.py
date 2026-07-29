@@ -146,19 +146,45 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 import groq_service
 
 async def cmd_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for /ai command to directly ask AI a question."""
+    """Handler for /ai command to directly ask AI a question (supports Vision AI for photos)."""
     message = update.effective_message
     if not message:
         return
 
+    user = message.from_user
+    user_name = user.full_name if user else "Участник"
+    if user and user.username:
+        u_tag = f"@{user.username}"
+    elif user:
+        u_tag = text_utils.user_mention(user.full_name, user.id)
+    else:
+        u_tag = user_name
+
     user_prompt = " ".join(context.args).strip() if context.args else ""
+
+    # Check if current message or replied message contains media (photo, sticker, GIF)
+    target_msg = message.reply_to_message or message
+    media_bytes, media_type = await telegram_utils.get_message_media_bytes(context, target_msg)
+
+    # If media exists, use Vision AI to analyze image/sticker/GIF
+    if media_bytes:
+        await telegram_utils.send_chat_action_safe(context, update.effective_chat.id, "typing")
+        try:
+            vision_reply = await groq_service.analyze_image(media_bytes, user_prompt, user_name)
+            if vision_reply:
+                full_reply = f"{u_tag}, {vision_reply}"
+                try:
+                    await message.reply_text(full_reply, parse_mode="Markdown")
+                except Exception:
+                    await message.reply_text(full_reply)
+                return
+        except Exception as e:
+            logger.error(f"Error in vision processing ({media_type}) for cmd_ai: {e}")
 
     if message.reply_to_message:
         replied_text = message.reply_to_message.text or message.reply_to_message.caption or ""
         if not replied_text:
-            if message.reply_to_message.photo:
-                replied_text = "[Фотография/Картинка]"
-            elif message.reply_to_message.sticker:
+            if message.reply_to_message.sticker:
                 stk_emoji = message.reply_to_message.sticker.emoji or ""
                 replied_text = f"[Стикер {stk_emoji}]"
             elif message.reply_to_message.animation:
@@ -178,14 +204,6 @@ async def cmd_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("💡 **Напишите вопрос к ИИ:**\nПример: `/ai что думаешь по поводу этого спора?`", parse_mode="Markdown")
         return
 
-    user = message.from_user
-    user_name = user.full_name if user else "Участник"
-    if user and user.username:
-        u_tag = f"@{user.username}"
-    elif user:
-        u_tag = text_utils.user_mention(user.full_name, user.id)
-    else:
-        u_tag = user_name
     await telegram_utils.send_chat_action_safe(context, update.effective_chat.id, "typing")
     try:
         ai_reply = await groq_service.generate_ai_reply(prompt, user_name)

@@ -204,12 +204,29 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
             if bot_username:
                 user_text = re.sub(rf'@{re.escape(bot_username)}', '', user_text, flags=re.IGNORECASE).strip()
 
+            target_msg = message.reply_to_message or message
+            media_bytes, media_type = await telegram_utils.get_message_media_bytes(context, target_msg)
+
+            u_tag = f"@{user.username}" if user.username else text_utils.user_mention(user.full_name, user.id)
+
+            if media_bytes:
+                await telegram_utils.send_chat_action_safe(context, chat.id, "typing")
+                try:
+                    vision_reply = await groq_service.analyze_image(media_bytes, user_text, user.full_name)
+                    if vision_reply:
+                        full_reply = f"{u_tag}, {vision_reply}"
+                        try:
+                            await message.reply_text(full_reply, parse_mode="Markdown")
+                        except Exception:
+                            await message.reply_text(full_reply)
+                        return
+                except Exception as e:
+                    logger.error(f"Error in Vision processing ({media_type}) for group message: {e}")
+
             if message.reply_to_message:
                 replied_text = message.reply_to_message.text or message.reply_to_message.caption or ""
                 if not replied_text:
-                    if message.reply_to_message.photo:
-                        replied_text = "[Фотография/Картинка]"
-                    elif message.reply_to_message.sticker:
+                    if message.reply_to_message.sticker:
                         stk_emoji = message.reply_to_message.sticker.emoji or ""
                         replied_text = f"[Стикер {stk_emoji}]"
                     elif message.reply_to_message.animation:
@@ -229,13 +246,11 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 logger.info(f"AI response requested by user {user.id} ({user.full_name}): '{prompt}'")
                 await telegram_utils.send_chat_action_safe(context, chat.id, "typing")
                 try:
-                    u_tag = f"@{user.username}" if user.username else text_utils.user_mention(user.full_name, user.id)
                     ai_reply = await groq_service.generate_ai_reply(prompt, user.full_name)
                     full_reply = f"{u_tag}, {ai_reply}"
                     try:
                         await message.reply_text(full_reply, parse_mode="Markdown")
                     except Exception:
-                        # Fallback to plain text if Telegram Markdown parsing fails
                         await message.reply_text(full_reply)
                 except Exception as e:
                     logger.error(f"Error sending AI reply to user {user.id}: {e}")

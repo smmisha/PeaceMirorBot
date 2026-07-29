@@ -28,13 +28,146 @@ def _get_groq_client() -> Optional[Groq]:
     return _client
 
 
+async def _check_meme_image_safety(image_url: str) -> bool:
+    """
+    Uses Mistral Pixtral Vision AI (pixtral-12b-2409) to verify meme image safety.
+    Checks for profanity, adult content, vulgarity, and explicit text inside the image.
+    """
+    from config import MISTRAL_API_KEY
+    if not MISTRAL_API_KEY:
+        return True
+
+    try:
+        import httpx
+        url = "https://api.mistral.ai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {MISTRAL_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "pixtral-12b-2409",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "Просканируй этот мем. Содержит ли картинка или текст на ней нецензурную лексику (мат на русском/английском), "
+                                "пошлость, эротику, алкоголь или жестокий негатив? "
+                                "Ответь исключительно в JSON формате: {\"is_safe\": true} или {\"is_safe\": false}."
+                            )
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": image_url
+                        }
+                    ]
+                }
+            ],
+            "temperature": 0.1,
+            "max_tokens": 60,
+            "response_format": {"type": "json_object"}
+        }
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                raw_content = data["choices"][0]["message"]["content"].strip()
+                res_json = json.loads(raw_content)
+                is_safe = bool(res_json.get("is_safe", True))
+                logger.info(f"Vision safety check result for {image_url}: is_safe={is_safe}")
+                return is_safe
+            else:
+                logger.warning(f"Mistral vision safety returned {resp.status_code}: {resp.text}")
+    except Exception as e:
+        logger.warning(f"Meme vision safety check warning for {image_url}: {e}")
+
+def convert_webp_to_jpeg(file_bytes: bytes) -> bytes:
+    """Converts WEBP, PNG, or sticker bytes to standard JPEG bytes for Vision API."""
+    try:
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(file_bytes))
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        out_buf = io.BytesIO()
+        img.save(out_buf, format="JPEG", quality=85)
+        return out_buf.getvalue()
+    except Exception as e:
+        logger.warning(f"Error converting image format with Pillow: {e}")
+        return file_bytes
+
+
+async def analyze_image(image_bytes: bytes, user_prompt: str = "", user_name: str = "Участник") -> Optional[str]:
+    """
+    Analyzes an image/sticker/GIF thumbnail using Mistral Pixtral Vision AI (pixtral-12b-2409).
+    """
+    from config import MISTRAL_API_KEY
+    if not MISTRAL_API_KEY:
+        logger.warning("MISTRAL_API_KEY not configured, skipping image vision analysis.")
+        return None
+
+    import base64
+    try:
+        import httpx
+        jpeg_bytes = convert_webp_to_jpeg(image_bytes)
+        b64_img = base64.b64encode(jpeg_bytes).decode("utf-8")
+        data_uri = f"data:image/jpeg;base64,{b64_img}"
+
+        prompt = user_prompt.strip() if user_prompt else "Опиши подробно, что нарисовано/изображено на этой картинке, стикере или кадре, и прочитай весь текст на нём."
+
+        system_prompt = (
+            "Ты — Мирчик, миролюбивый, отзывчивый и умный ИИ-помощник в Telegram-чате. "
+            f"Тебя спрашивает участник {user_name}. Посмотри на изображение/стикер/кадр и ответь на его вопрос "
+            "вежливо, развёрнуто и с лёгким дружелюбным юмором. Отвечай на русском языке."
+        )
+
+        url = "https://api.mistral.ai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {MISTRAL_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "pixtral-12b-2409",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": data_uri
+                        }
+                    ]
+                }
+            ],
+            "temperature": 0.7,
+            "max_tokens": 600
+        }
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                reply = data["choices"][0]["message"]["content"].strip()
+                logger.info(f"Successfully generated vision response for user {user_name}")
+                return reply
+            else:
+                logger.warning(f"Mistral vision analysis returned status {resp.status_code}: {resp.text}")
+    except Exception as e:
+        logger.error(f"Error during image analysis: {e}")
+
+    return None
+
+
 async def fetch_meme() -> Tuple[Optional[str], str]:
-    """Fetches a 100% Russian, clean, non-profane, family-friendly meme photo URL and title."""
+    """Fetches a 100% clean, non-profane, wholesome meme photo URL and title verified by Vision AI."""
     import httpx, random, re
     from conflict_detector import find_violation
-    subreddits = ["Pikabu", "ru_memes"]
+    subreddits = ["ru_memes", "wholesomememes", "Catmemes"]
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=6.0) as client:
             for _ in range(8):
                 sub = random.choice(subreddits)
                 resp = await client.get(f"https://meme-api.com/gimme/{sub}")
@@ -43,18 +176,21 @@ async def fetch_meme() -> Tuple[Optional[str], str]:
                     url = data.get("url")
                     title = data.get("title", "🤪 Свежий мем")
 
-                    # Check 1: Must NOT be NSFW / Spoiler
+                    # Check 1: Must NOT be NSFW or Spoiler
                     if data.get("nsfw", False) or data.get("spoiler", False):
                         continue
 
-                    # Check 2: Must contain Russian Cyrillic text
-                    if not re.search(r'[а-яёА-ЯЁ]', title):
-                        continue
-
-                    # Check 3: MUST BE 100% CLEAN WITHOUT PROFANITY OR BAD WORDS!
+                    # Check 2: MUST BE CLEAN WITHOUT PROFANITY OR BAD WORDS IN TITLE!
                     has_violation, _ = find_violation(title)
                     if has_violation:
                         continue
+
+                    # Check 3: Vision AI Image Safety Filter (reads text INSIDE image for profanity/vulgarity)
+                    if url:
+                        is_safe = await _check_meme_image_safety(url)
+                        if not is_safe:
+                            logger.info(f"Skipping meme due to Vision AI safety filter: {url}")
+                            continue
 
                     return url, f"🤣 {title}"
     except Exception as e:
@@ -66,7 +202,7 @@ async def fetch_meme() -> Tuple[Optional[str], str]:
             if resp.status_code == 200:
                 data = resp.json()
                 if data and isinstance(data, list):
-                    return data[0].get("url"), "🐱 Милый котик для настроения!"
+                    return data[0].get("url"), "🐱 Милый котик для хорошего настроения!"
     except Exception:
         pass
 
