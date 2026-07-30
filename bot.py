@@ -1,8 +1,10 @@
 import os
 import asyncio
 import sys
+import time
 import logging
 from telegram import Update, BotCommand, BotCommandScopeDefault, BotCommandScopeAllChatAdministrators
+from telegram.error import NetworkError, TimedOut
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -168,14 +170,12 @@ async def on_error(update, context):
     logger.error(f"Unhandled exception while processing update: {context.error}", exc_info=context.error)
 
 
-def main():
-    """Main entry point for starting the PeaceMirorBot Telegram bot."""
-    if not BOT_TOKEN:
-        logger.critical("BOT_TOKEN is empty! Please set BOT_TOKEN in environment or .env file.")
-        sys.exit(1)
-
-    logger.info(f"Starting PeaceMirorBot... Configured Admin ID: {ADMIN_ID}")
-
+def build_app():
+    """
+    Строит Application и регистрирует все хендлеры. Вынесено из main() в отдельную
+    функцию, чтобы при повторной попытке запуска (см. main()) можно было пересобрать
+    бота с нуля, а не переиспользовать объект после неудачной инициализации.
+    """
     # Proxy: Only set if TELEGRAM_PROXY is explicitly specified (ignore default PA HTTP_PROXY for api.telegram.org)
     proxy_url = os.getenv("TELEGRAM_PROXY")
     builder = (
@@ -242,8 +242,39 @@ def main():
 
     app.add_error_handler(on_error)
 
-    logger.info("Bot handlers registered. Starting long polling...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    return app
+
+
+def main():
+    """Main entry point for starting the PeaceMirorBot Telegram bot."""
+    if not BOT_TOKEN:
+        logger.critical("BOT_TOKEN is empty! Please set BOT_TOKEN in environment or .env file.")
+        sys.exit(1)
+
+    logger.info(f"Starting PeaceMirorBot... Configured Admin ID: {ADMIN_ID}")
+
+    # Внутри run_polling() библиотека сама, ДО нашего кода, дёргает get_me() для
+    # проверки токена — этот вызов ничем не обёрнут (telegram_utils.with_retry
+    # покрывает только рантайм-действия модерации). Прокси PythonAnywhere иногда
+    # отдаёт 503 именно в этот момент, и без ретрая тут процесс падает с Exit 1
+    # прямо на старте, хотя повторная попытка почти всегда проходит.
+    startup_delay = 5
+    max_startup_delay = 60
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            app = build_app()
+            logger.info("Bot handlers registered. Starting long polling...")
+            app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+            break  # run_polling() завершился штатно (Ctrl+C / остановка процесса)
+        except (NetworkError, TimedOut) as e:
+            logger.warning(
+                f"Сбой сети при старте бота (попытка {attempt}): {e}. "
+                f"Повтор через {startup_delay}s"
+            )
+            time.sleep(startup_delay)
+            startup_delay = min(startup_delay * 2, max_startup_delay)
 
 
 if __name__ == "__main__":
